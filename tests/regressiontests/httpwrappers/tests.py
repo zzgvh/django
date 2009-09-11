@@ -396,9 +396,17 @@ u'\ufffd'
 # Pickling a QueryDict #
 ########################
 >>> import pickle
+>>> q = QueryDict('')
+>>> q1 = pickle.loads(pickle.dumps(q, 2))
+>>> q == q1
+True
 >>> q = QueryDict('a=b&c=d')
 >>> q1 = pickle.loads(pickle.dumps(q, 2))
 >>> q == q1
+True
+>>> q = QueryDict('a=b&c=d&a=1') 
+>>> q1 = pickle.loads(pickle.dumps(q, 2))
+>>> q == q1 
 True
 
 ######################################
@@ -435,6 +443,17 @@ It will also raise errors for keys with non-ascii data.
 Traceback (most recent call last):
 ...
 UnicodeEncodeError: ..., HTTP response headers must be in US-ASCII format
+
+# Bug #10188: Do not allow newlines in headers (CR or LF)
+>>> r['test\\rstr'] = 'test'
+Traceback (most recent call last):
+...
+BadHeaderError: Header values can't contain newlines (got 'test\\rstr')
+
+>>> r['test\\nstr'] = 'test'
+Traceback (most recent call last):
+...
+BadHeaderError: Header values can't contain newlines (got 'test\\nstr')
 
 #
 # Regression test for #8278: QueryDict.update(QueryDict)

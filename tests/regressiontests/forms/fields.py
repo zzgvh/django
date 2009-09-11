@@ -366,7 +366,7 @@ True
 Traceback (most recent call last):
 ...
 ValidationError: [u'Ensure that there are no more than 2 decimal places.']
->>> f.clean('-000.1234')
+>>> f.clean('-000.12345')
 Traceback (most recent call last):
 ...
 ValidationError: [u'Ensure that there are no more than 4 digits in total.']
@@ -416,18 +416,28 @@ ValidationError: [u'Ensure that there are no more than 2 decimal places.']
 # Leading whole zeros "collapse" to one digit.
 >>> f.clean('0000000.10') == Decimal("0.1")
 True
->>> f.clean('0000000.100')
-Traceback (most recent call last):
-...
-ValidationError: [u'Ensure that there are no more than 3 digits in total.']
+
+# But a leading 0 before the . doesn't count towards max_digits
+>>> f.clean('0000000.100') == Decimal("0.100")
+True
 
 # Only leading whole zeros "collapse" to one digit.
 >>> f.clean('000000.02') == Decimal('0.02')
 True
->>> f.clean('000000.002')
+>>> f.clean('000000.0002')
 Traceback (most recent call last):
 ...
 ValidationError: [u'Ensure that there are no more than 3 digits in total.']
+>>> f.clean('.002') == Decimal("0.002")
+True
+
+>>> f = DecimalField(max_digits=2, decimal_places=2)
+>>> f.clean('.01') == Decimal(".01")
+True
+>>> f.clean('1.1')
+Traceback (most recent call last):
+...
+ValidationError: [u'Ensure that there are no more than 0 digits before the decimal point.']
 
 
 # DateField ###################################################################
@@ -735,6 +745,27 @@ ValidationError: [u'Enter a valid e-mail address.']
 Traceback (most recent call last):
 ...
 ValidationError: [u'Enter a valid e-mail address.']
+>>> f.clean('example@invalid-.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid e-mail address.']
+>>> f.clean('example@-invalid.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid e-mail address.']
+>>> f.clean('example@inv-.alid-.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid e-mail address.']
+>>> f.clean('example@inv-.-alid.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid e-mail address.']
+>>> f.clean('example@valid-----hyphens.com')
+u'example@valid-----hyphens.com'
+
+>>> f.clean('example@valid-with-hyphens.com')
+u'example@valid-with-hyphens.com'
 
 >>> f = EmailField(required=False)
 >>> f.clean('')
@@ -835,6 +866,21 @@ ValidationError: [u'The submitted file is empty.']
 >>> type(f.clean(SimpleUploadedFile('name', 'Some File Content'), 'files/test4.pdf'))
 <class 'django.core.files.uploadedfile.SimpleUploadedFile'>
 
+>>> f = FileField(max_length = 5)
+>>> f.clean(SimpleUploadedFile('test_maxlength.txt', 'hello world'))
+Traceback (most recent call last):
+...
+ValidationError: [u'Ensure this filename has at most 5 characters (it has 18).']
+
+>>> f.clean('', 'files/test1.pdf')
+'files/test1.pdf'
+
+>>> f.clean(None, 'files/test2.pdf')
+'files/test2.pdf'
+
+>>> type(f.clean(SimpleUploadedFile('name', 'Some File Content')))
+<class 'django.core.files.uploadedfile.SimpleUploadedFile'>
+
 # URLField ##################################################################
 
 >>> f = URLField()
@@ -854,6 +900,10 @@ u'http://example.com/'
 u'http://www.example.com/'
 >>> f.clean('http://www.example.com:8000/test')
 u'http://www.example.com:8000/test'
+>>> f.clean('valid-with-hyphens.com')
+u'http://valid-with-hyphens.com/'
+>>> f.clean('subdomain.domain.com')
+u'http://subdomain.domain.com/'
 >>> f.clean('http://200.8.9.10')
 u'http://200.8.9.10/'
 >>> f.clean('http://200.8.9.10:8000/test')
@@ -878,6 +928,24 @@ ValidationError: [u'Enter a valid URL.']
 Traceback (most recent call last):
 ...
 ValidationError: [u'Enter a valid URL.']
+>>> f.clean('http://invalid-.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid URL.']
+>>> f.clean('http://-invalid.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid URL.']
+>>> f.clean('http://inv-.alid-.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid URL.']
+>>> f.clean('http://inv-.-alid.com')
+Traceback (most recent call last):
+...
+ValidationError: [u'Enter a valid URL.']
+>>> f.clean('http://valid-----hyphens.com')
+u'http://valid-----hyphens.com/'
 
 >>> f = URLField(required=False)
 >>> f.clean('')
@@ -1009,6 +1077,10 @@ False
 True
 >>> f.clean(0)
 False
+>>> f.clean('1')
+True
+>>> f.clean('0')
+False
 >>> f.clean('Django rocks')
 True
 
@@ -1079,7 +1151,7 @@ ValidationError: [u'Select a valid choice. 6 is not one of the available choices
 
 # TypedChoiceField ############################################################
 
-# TypedChoiceField is just like ChoiceField, except that coerced types will 
+# TypedChoiceField is just like ChoiceField, except that coerced types will
 # be returned:
 >>> f = TypedChoiceField(choices=[(1, "+1"), (-1, "-1")], coerce=int)
 >>> f.clean('1')
@@ -1097,7 +1169,7 @@ ValidationError: [u'Select a valid choice. 2 is not one of the available choices
 
 # This can also cause weirdness: be careful (bool(-1) == True, remember)
 >>> f.coerce = bool
->>> f.clean('-1') 
+>>> f.clean('-1')
 True
 
 # Even more weirdness: if you have a valid choice but your coercion function
@@ -1133,7 +1205,10 @@ True
 >>> f.clean(False)
 False
 >>> f.clean(None)
+>>> f.clean('0')
+False
 >>> f.clean('1')
+True
 >>> f.clean('2')
 >>> f.clean('3')
 >>> f.clean('hello')
@@ -1151,6 +1226,21 @@ False
 True
 >>> f.cleaned_data['hidden_nullbool2']
 False
+
+# Make sure we're compatible with MySQL, which uses 0 and 1 for its boolean
+# values. (#9609)
+>>> NULLBOOL_CHOICES = (('1', 'Yes'), ('0', 'No'), ('', 'Unknown'))
+>>> class MySQLNullBooleanForm(Form):
+...     nullbool0 = NullBooleanField(widget=RadioSelect(choices=NULLBOOL_CHOICES))
+...     nullbool1 = NullBooleanField(widget=RadioSelect(choices=NULLBOOL_CHOICES))
+...     nullbool2 = NullBooleanField(widget=RadioSelect(choices=NULLBOOL_CHOICES))
+>>> f = MySQLNullBooleanForm({ 'nullbool0': '1', 'nullbool1': '0', 'nullbool2': '' })
+>>> f.full_clean()
+>>> f.cleaned_data['nullbool0']
+True
+>>> f.cleaned_data['nullbool1']
+False
+>>> f.cleaned_data['nullbool2']
 
 # MultipleChoiceField #########################################################
 
@@ -1322,6 +1412,8 @@ u'.../django/forms/fields.py'
 # SplitDateTimeField ##########################################################
 
 >>> f = SplitDateTimeField()
+>>> f.widget
+<django.forms.widgets.SplitDateTimeWidget object ...
 >>> f.clean([datetime.date(2006, 1, 10), datetime.time(7, 30)])
 datetime.datetime(2006, 1, 10, 7, 30)
 >>> f.clean(None)

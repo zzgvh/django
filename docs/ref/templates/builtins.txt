@@ -59,33 +59,66 @@ cycle
 .. versionchanged:: 1.0
     Cycle among the given strings or variables each time this tag is encountered.
 
-Within a loop, cycles among the given strings/variables each time through the
+Within a loop, cycles among the given strings each time through the
 loop::
 
     {% for o in some_list %}
-        <tr class="{% cycle 'row1' 'row2' rowvar %}">
+        <tr class="{% cycle 'row1' 'row2' %}">
             ...
         </tr>
     {% endfor %}
 
-Outside of a loop, give the values a unique name the first time you call it,
-then use that name each successive time through::
+You can use variables, too. For example, if you have two template variables,
+``rowvalue1`` and ``rowvalue2``, you can cycle between their values like this::
 
-        <tr class="{% cycle 'row1' 'row2' rowvar as rowcolors %}">...</tr>
-        <tr class="{% cycle rowcolors %}">...</tr>
-        <tr class="{% cycle rowcolors %}">...</tr>
+    {% for o in some_list %}
+        <tr class="{% cycle rowvalue1 rowvalue2 %}">
+            ...
+        </tr>
+    {% endfor %}
 
-You can use any number of values, separated by spaces. Values enclosed in
-single (') or double quotes (") are treated as string literals, while values
-without quotes are assumed to refer to context variables.
+Yes, you can mix variables and strings::
 
-You can also separate values with commas::
+    {% for o in some_list %}
+        <tr class="{% cycle 'row1' rowvalue2 'row3' %}">
+            ...
+        </tr>
+    {% endfor %}
+
+In some cases you might want to refer to the next value of a cycle from
+outside of a loop. To do this, just give the ``{% cycle %}`` tag a name, using
+"as", like this::
+
+    {% cycle 'row1' 'row2' as rowcolors %}
+
+From then on, you can insert the current value of the cycle wherever you'd like
+in your template::
+
+    <tr class="{% cycle rowcolors %}">...</tr>
+    <tr class="{% cycle rowcolors %}">...</tr>
+
+You can use any number of values in a ``{% cycle %}`` tag, separated by spaces.
+Values enclosed in single (``'``) or double quotes (``"``) are treated as
+string literals, while values without quotes are treated as template variables.
+
+Note that the variables included in the cycle will not be escaped. This is
+because template tags do not escape their content. If you want to escape the
+variables in the cycle, you must do so explicitly::
+
+    {% filter force_escape %}
+        {% cycle var1 var2 var3 %}
+    {% endfilter %}
+
+For backwards compatibility, the ``{% cycle %}`` tag supports the much inferior
+old syntax from previous Django versions. You shouldn't use this in any new
+projects, but for the sake of the people who are still using it, here's what it
+looks like::
 
     {% cycle row1,row2,row3 %}
 
-In this syntax, each value will be interpreted as literal text. The
-comma-based syntax exists for backwards-compatibility, and should not be
-used for new projects.
+In this syntax, each value gets interpreted as a literal string, and there's no
+way to specify variable values. Or literal commas. Or spaces. Did we mention
+you shouldn't use this syntax in any new projects?
 
 .. templatetag:: debug
 
@@ -135,8 +168,9 @@ Sample usage::
 firstof
 ~~~~~~~
 
-Outputs the first variable passed that is not False.  Outputs nothing if all the
-passed variables are False.
+Outputs the first variable passed that is not False, without escaping.
+
+Outputs nothing if all the passed variables are False.
 
 Sample usage::
 
@@ -145,17 +179,25 @@ Sample usage::
 This is equivalent to::
 
     {% if var1 %}
-        {{ var1 }}
+        {{ var1|safe }}
     {% else %}{% if var2 %}
-        {{ var2 }}
+        {{ var2|safe }}
     {% else %}{% if var3 %}
-        {{ var3 }}
+        {{ var3|safe }}
     {% endif %}{% endif %}{% endif %}
 
 You can also use a literal string as a fallback value in case all
 passed variables are False::
 
     {% firstof var1 var2 var3 "fallback value" %}
+
+Note that the variables included in the firstof tag will not be escaped. This
+is because template tags do not escape their content. If you want to escape
+the variables in the firstof tag, you must do so explicitly::
+
+    {% filter force_escape %}
+        {% firstof var1 var2 var3 "fallback value" %}
+    {% endfilter %}
 
 .. templatetag:: for
 
@@ -208,6 +250,35 @@ The for loop sets a number of variables available within the loop:
     ``forloop.parentloop``      For nested loops, this is the loop "above" the
                                 current one
     ==========================  ================================================
+
+for ... empty
+^^^^^^^^^^^^^
+
+.. versionadded:: 1.1
+
+The ``for`` tag can take an optional ``{% empty %}`` clause that will be
+displayed if the given array is empty or could not be found::
+
+    <ul>
+    {% for athlete in athlete_list %}
+        <li>{{ athlete.name }}</li>
+    {% empty %}
+        <li>Sorry, no athlete in this list!</li>
+    {% endfor %}
+    <ul>
+
+The above is equivalent to -- but shorter, cleaner, and possibly faster
+than -- the following::
+
+    <ul>
+      {% if athlete_list %}
+        {% for athlete in athlete_list %}
+          <li>{{ athlete.name }}</li>
+        {% endfor %}
+      {% else %}
+        <li>Sorry, no athletes in this list.</li>
+      {% endif %}
+    </ul>
 
 .. templatetag:: if
 
@@ -303,6 +374,19 @@ The 'ifchanged' block tag is used within a loop. It has two possible uses.
             {% ifchanged date.hour date.date %}
                 {{ date.hour }}
             {% endifchanged %}
+        {% endfor %}
+
+The ``ifchanged`` tag can also take an optional ``{% else %}`` clause that
+will be displayed if the value has not changed::
+
+        {% for match in matches %}
+            <div style="background-color:
+                {% ifchanged match.ballot_id %}
+                    {% cycle "red" "blue" %}
+                {% else %}
+                    grey
+                {% endifchanged %}
+            ">{{ match }}</div>
         {% endfor %}
 
 .. templatetag:: ifequal
@@ -439,7 +523,8 @@ Available format strings:
                       month, 2 characters.
     t                 Number of days in the given month.        ``28`` to ``31``
     T                 Time zone of this machine.                ``'EST'``, ``'MDT'``
-    U                 Not implemented.
+    U                 Seconds since the Unix Epoch
+                      (January 1 1970 00:00:00 UTC).
     w                 Day of the week, digits without           ``'0'`` (Sunday) to ``'6'`` (Saturday)
                       leading zeros.
     W                 ISO-8601 week number of year, with        ``1``, ``53``
@@ -699,9 +784,9 @@ different call::
 
 
     {% url path.to.view arg, arg2 as the_url %}
-    
+
     <a href="{{ the_url }}">I'm linking to {{ the_url }}</a>
-    
+
 This ``{% url ... as var %}`` syntax will *not* cause an error if the view is
 missing. In practice you'll use this to link to views that are optional::
 
@@ -709,6 +794,16 @@ missing. In practice you'll use this to link to views that are optional::
     {% if the_url %}
       <a href="{{ the_url }}">Link to optional stuff</a>
     {% endif %}
+
+.. versionadded:: 1.1
+
+If you'd like to retrieve a namespaced URL, specify the fully qualified name::
+
+    {% url myapp:view-name %}
+
+This will follow the normal :ref:`namespaced URL resolution strategy
+<topics-http-reversing-url-namespaces>`, including using any hints provided
+by the context as to the current application.
 
 .. templatetag:: widthratio
 
@@ -811,6 +906,13 @@ For example::
 If ``value`` is a ``datetime`` object (e.g., the result of
 ``datetime.datetime.now()``), the output will be the string
 ``'Wed 09 Jan 2008'``.
+
+When used without a format string::
+
+    {{ value|date }}
+
+...the formatting string defined in the :setting:`DATE_FORMAT` setting will be
+used.
 
 .. templatefilter:: default
 
@@ -1130,7 +1232,7 @@ For example::
 
     {{ value|linebreaks }}
 
-If ``value`` is ``Joel\nis a slug``, the output will be ``<p>Joel<br>is a
+If ``value`` is ``Joel\nis a slug``, the output will be ``<p>Joel<br />is a
 slug</p>``.
 
 .. templatefilter:: linebreaksbr
@@ -1214,7 +1316,7 @@ suffix as a parameter to the filter.
 
 Example::
 
-    You have {{ num_walruses }} walrus{{ num_walrus|pluralize:"es" }}.
+    You have {{ num_walruses }} walrus{{ num_walruses|pluralize:"es" }}.
 
 For words that don't pluralize by simple suffix, you can specify both a
 singular and plural suffix, separated by a comma.
@@ -1222,7 +1324,7 @@ singular and plural suffix, separated by a comma.
 Example::
 
     You have {{ num_cherries }} cherr{{ num_cherries|pluralize:"y,ies" }}.
-    
+
 .. templatefilter:: pprint
 
 pprint
@@ -1230,7 +1332,7 @@ pprint
 
 A wrapper around `pprint.pprint`__ -- for debugging, really.
 
-__ http://www.python.org/doc/2.5/lib/module-pprint.html
+__ http://docs.python.org/library/pprint.html
 
 .. templatefilter:: random
 
@@ -1276,6 +1378,21 @@ safe
 Marks a string as not requiring further HTML escaping prior to output. When
 autoescaping is off, this filter has no effect.
 
+.. templatefilter:: safeseq
+
+safeseq
+~~~~~~~
+
+Applies the :tfilter:`safe` filter to each element of a sequence.  Useful in
+conjunction with other filters that operate on sequences, such as
+:tfilter:`join`.  For example::
+
+    {{ some_list|safeseq|join:", " }}
+
+You couldn't use the :tfilter:`safe` filter directly in this case, as it would
+first convert the variable into a string, rather than working with the
+individual elements of the sequence.
+
 .. templatefilter:: slice
 
 slice
@@ -1315,8 +1432,8 @@ Formats the variable according to the argument, a string formatting specifier.
 This specifier uses Python string formatting syntax, with the exception that
 the leading "%" is dropped.
 
-See http://docs.python.org/lib/typesseq-strings.html for documentation of
-Python string formatting
+See http://docs.python.org/library/stdtypes.html#string-formatting-operations
+for documentation of Python string formatting
 
 For example::
 
@@ -1354,6 +1471,13 @@ For example::
 
 If ``value`` is equivalent to ``datetime.datetime.now()``, the output will be
 the string ``"01:23"``.
+
+When used without a format string::
+
+    {{ value|time }}
+
+...the formatting string defined in the :setting:`TIME_FORMAT` setting will be
+used.
 
 .. templatefilter:: timesince
 
@@ -1559,20 +1683,20 @@ Value       Argument                Outputs
 ==========  ======================  ==================================
 
 Other tags and filter libraries
-===============================
+-------------------------------
 
 Django comes with a couple of other template-tag libraries that you have to
 enable explicitly in your ``INSTALLED_APPS`` setting and enable in your
 template with the ``{% load %}`` tag.
 
 django.contrib.humanize
------------------------
+~~~~~~~~~~~~~~~~~~~~~~~
 
 A set of Django template filters useful for adding a "human touch" to data. See
 :ref:`ref-contrib-humanize`.
 
 django.contrib.markup
----------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 A collection of template filters that implement these common markup languages:
 
@@ -1583,7 +1707,7 @@ A collection of template filters that implement these common markup languages:
 See :ref:`ref-contrib-markup`.
 
 django.contrib.webdesign
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 A collection of template tags that can be useful while designing a website,
 such as a generator of Lorem Ipsum text. See :ref:`ref-contrib-webdesign`.

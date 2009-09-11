@@ -25,6 +25,15 @@ The main changes from the old system are:
       functions: ``{% get_comment_form %}``, which returns a form for posting a
       new comment, and ``{% render_comment_form %}``, which renders said form
       using the ``comments/form.html`` template.
+      
+    * The way comments are include in your URLconf have changed; you'll need to
+      replace::
+    
+            (r'^comments/', include('django.contrib.comments.urls.comments')),
+      
+      with::
+
+            (r'^comments/', include('django.contrib.comments.urls')),
 
 Upgrading data
 --------------
@@ -48,7 +57,7 @@ run the following SQL:
         comment, submit_date, ip_address, is_public, is_removed)
     SELECT
         content_type_id, object_id, site_id, person_name, '', '', comment,
-        submit_date, ip_address, is_public, approved
+        submit_date, ip_address, is_public, not approved
     FROM comments_freecomment;
 
     INSERT INTO django_comments 

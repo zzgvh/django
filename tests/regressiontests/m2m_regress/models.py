@@ -26,6 +26,21 @@ class Entry(models.Model):
     def __unicode__(self):
         return self.name
 
+# Two models both inheriting from a base model with a self-referential m2m field
+class SelfReferChild(SelfRefer):
+    pass
+
+class SelfReferChildSibling(SelfRefer):
+    pass
+
+# Many-to-Many relation between models, where one of the PK's isn't an Autofield
+class Line(models.Model):
+    name = models.CharField(max_length=100)
+
+class Worksheet(models.Model):
+    id = models.CharField(primary_key=True, max_length=100)
+    lines = models.ManyToManyField(Line, blank=True, null=True)
+
 __test__ = {"regressions": """
 # Multiple m2m references to the same model or a different model must be
 # distinguished when accessing the relations through an instance attribute.
@@ -57,7 +72,26 @@ __test__ = {"regressions": """
 >>> SelfRefer.objects.filter(porcupine='fred')
 Traceback (most recent call last):
 ...
-FieldError: Cannot resolve keyword 'porcupine' into field. Choices are: id, name, references, related
+FieldError: Cannot resolve keyword 'porcupine' into field. Choices are: id, name, references, related, selfreferchild, selfreferchildsibling
+
+# Test to ensure that the relationship between two inherited models
+# with a self-referential m2m field maintains symmetry
+>>> sr_child = SelfReferChild(name="Hanna")
+>>> sr_child.save()
+
+>>> sr_sibling = SelfReferChildSibling(name="Beth")
+>>> sr_sibling.save()
+>>> sr_child.related.add(sr_sibling)
+>>> sr_child.related.all()
+[<SelfRefer: Beth>]
+>>> sr_sibling.related.all()
+[<SelfRefer: Hanna>]
+
+# Regression for #11311 - The primary key for models in a m2m relation
+# doesn't have to be an AutoField
+>>> w = Worksheet(id='abc')
+>>> w.save()
+>>> w.delete()
 
 """
 }

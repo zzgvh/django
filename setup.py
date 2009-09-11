@@ -66,15 +66,13 @@ if len(sys.argv) > 1 and sys.argv[1] == 'bdist_wininst':
         file_info[0] = '\\PURELIB\\%s' % file_info[0]
 
 # Dynamically calculate the version based on django.VERSION.
-version_tuple = __import__('django').VERSION
-if version_tuple[2] is not None:
-    version = "%d.%d_%s" % version_tuple
-else:
-    version = "%d.%d" % version_tuple[:2]
+version = __import__('django').get_version()
+if u'SVN' in version:
+    version = ' '.join(version.split(' ')[:-1])
 
 setup(
     name = "Django",
-    version = version,
+    version = version.replace(' ', '-'),
     url = 'http://www.djangoproject.com/',
     author = 'Django Software Foundation',
     author_email = 'foundation@djangoproject.com',
@@ -83,4 +81,17 @@ setup(
     cmdclass = cmdclasses,
     data_files = data_files,
     scripts = ['django/bin/django-admin.py'],
+    classifiers = ['Development Status :: 5 - Production/Stable',
+                   'Environment :: Web Environment',
+                   'Framework :: Django',
+                   'Intended Audience :: Developers',
+                   'License :: OSI Approved :: BSD License',
+                   'Operating System :: OS Independent',
+                   'Programming Language :: Python',
+                   'Topic :: Internet :: WWW/HTTP',
+                   'Topic :: Internet :: WWW/HTTP :: Dynamic Content',
+                   'Topic :: Internet :: WWW/HTTP :: WSGI',
+                   'Topic :: Software Development :: Libraries :: Application Frameworks',
+                   'Topic :: Software Development :: Libraries :: Python Modules',
+                   ],
 )

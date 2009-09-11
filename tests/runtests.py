@@ -110,6 +110,10 @@ def django_tests(verbosity, interactive, test_labels):
         'django.middleware.common.CommonMiddleware',
     )
     settings.SITE_ID = 1
+    # For testing comment-utils, we require the MANAGERS attribute
+    # to be set, so that a test email is sent out which we catch
+    # in our tests.
+    settings.MANAGERS = ("admin@djangoproject.com",)
 
     # Load all the ALWAYS_INSTALLED_APPS.
     # (This import statement is intentionally delayed until after we
@@ -142,15 +146,19 @@ def django_tests(verbosity, interactive, test_labels):
         if not test_labels or model_name in test_labels:
             extra_tests.append(InvalidModelTestCase(model_label))
             try:
-                # Invalid models are not working apps, so we cannot pass them into 
+                # Invalid models are not working apps, so we cannot pass them into
                 # the test runner with the other test_labels
                 test_labels.remove(model_name)
             except ValueError:
                 pass
-    
+
     # Run the test suite, including the extra validation tests.
-    from django.test.simple import run_tests
-    failures = run_tests(test_labels, verbosity=verbosity, interactive=interactive, extra_tests=extra_tests)
+    from django.test.utils import get_runner
+    if not hasattr(settings, 'TEST_RUNNER'):
+        settings.TEST_RUNNER = 'django.test.simple.run_tests'
+    test_runner = get_runner(settings)
+
+    failures = test_runner(test_labels, verbosity=verbosity, interactive=interactive, extra_tests=extra_tests)
     if failures:
         sys.exit(failures)
 

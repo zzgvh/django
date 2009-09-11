@@ -58,9 +58,10 @@ class RelatedFilterSpec(FilterSpec):
             self.lookup_title = f.rel.to._meta.verbose_name
         else:
             self.lookup_title = f.verbose_name
-        self.lookup_kwarg = '%s__%s__exact' % (f.name, f.rel.to._meta.pk.name)
+        rel_name = f.rel.get_related_field().name
+        self.lookup_kwarg = '%s__%s__exact' % (f.name, rel_name)
         self.lookup_val = request.GET.get(self.lookup_kwarg, None)
-        self.lookup_choices = f.rel.to._default_manager.all()
+        self.lookup_choices = f.get_choices(include_blank=False)
 
     def has_output(self):
         return len(self.lookup_choices) > 1
@@ -72,8 +73,7 @@ class RelatedFilterSpec(FilterSpec):
         yield {'selected': self.lookup_val is None,
                'query_string': cl.get_query_string({}, [self.lookup_kwarg]),
                'display': _('All')}
-        for val in self.lookup_choices:
-            pk_val = getattr(val, self.field.rel.to._meta.pk.attname)
+        for pk_val, val in self.lookup_choices:
             yield {'selected': self.lookup_val == smart_unicode(pk_val),
                    'query_string': cl.get_query_string({self.lookup_kwarg: pk_val}),
                    'display': val}
@@ -90,7 +90,7 @@ class ChoicesFilterSpec(FilterSpec):
         yield {'selected': self.lookup_val is None,
                'query_string': cl.get_query_string({}, [self.lookup_kwarg]),
                'display': _('All')}
-        for k, v in self.field.choices:
+        for k, v in self.field.flatchoices:
             yield {'selected': smart_unicode(k) == self.lookup_val,
                     'query_string': cl.get_query_string({self.lookup_kwarg: k}),
                     'display': v}

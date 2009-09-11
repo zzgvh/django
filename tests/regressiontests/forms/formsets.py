@@ -241,7 +241,7 @@ data.
 
 # FormSets with deletion ######################################################
 
-We can easily add deletion ability to a FormSet with an agrument to
+We can easily add deletion ability to a FormSet with an argument to
 formset_factory. This will add a boolean field to each form instance. When
 that boolean field is True, the form will be in formset.deleted_forms
 
@@ -286,6 +286,34 @@ True
 >>> [form.cleaned_data for form in formset.deleted_forms]
 [{'votes': 900, 'DELETE': True, 'choice': u'Fergie'}]
 
+If we fill a form with something and then we check the can_delete checkbox for
+that form, that form's errors should not make the entire formset invalid since
+it's going to be deleted.
+
+>>> class CheckForm(Form):
+...    field = IntegerField(min_value=100)
+
+>>> data = {
+...     'check-TOTAL_FORMS': '3', # the number of forms rendered
+...     'check-INITIAL_FORMS': '2', # the number of forms with initial data
+...     'check-0-field': '200',
+...     'check-0-DELETE': '',
+...     'check-1-field': '50',
+...     'check-1-DELETE': 'on',
+...     'check-2-field': '',
+...     'check-2-DELETE': '',
+... }
+>>> CheckFormSet = formset_factory(CheckForm, can_delete=True)
+>>> formset = CheckFormSet(data, prefix='check')
+>>> formset.is_valid()
+True
+
+If we remove the deletion flag now we will have our validation back.
+
+>>> data['check-1-DELETE'] = ''
+>>> formset = CheckFormSet(data, prefix='check')
+>>> formset.is_valid()
+False
 
 # FormSets with ordering ######################################################
 
@@ -366,6 +394,18 @@ True
 {'votes': 500, 'ORDER': None, 'choice': u'The Decemberists'}
 {'votes': 50, 'ORDER': None, 'choice': u'Basia Bulat'}
 
+Ordering should work with blank fieldsets.
+
+>>> data = {
+...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
+...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+... }
+
+>>> formset = ChoiceFormSet(data, auto_id=False, prefix='choices')
+>>> formset.is_valid()
+True
+>>> for form in formset.ordered_forms:
+...    print form.cleaned_data
 
 # FormSets with ordering + deletion ###########################################
 

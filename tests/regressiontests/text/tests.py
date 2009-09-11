@@ -10,11 +10,23 @@ r"""
 >>> print list(smart_split(r'''This is "a person's" test.'''))[2]
 "a person's"
 >>> print list(smart_split(r'''This is "a person\"s" test.'''))[2]
-"a person"s"
+"a person\"s"
 >>> list(smart_split('''"a 'one'''))
 [u'"a', u"'one"]
 >>> print list(smart_split(r'''all friends' tests'''))[1]
 friends'
+>>> list(smart_split(u'url search_page words="something else"'))
+[u'url', u'search_page', u'words="something else"']
+>>> list(smart_split(u"url search_page words='something else'"))
+[u'url', u'search_page', u"words='something else'"]
+>>> list(smart_split(u'url search_page words "something else"'))
+[u'url', u'search_page', u'words', u'"something else"']
+>>> list(smart_split(u'url search_page words-"something else"'))
+[u'url', u'search_page', u'words-"something else"']
+>>> list(smart_split(u'url search_page words=hello'))
+[u'url', u'search_page', u'words=hello']
+>>> list(smart_split(u'url search_page words="something else'))
+[u'url', u'search_page', u'words="something', u'else']
 
 ### urlquote #############################################################
 >>> from django.utils.http import urlquote, urlquote_plus

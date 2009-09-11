@@ -19,7 +19,8 @@ try:
 except NameError:
     from django.utils.itercompat import sorted
 
-temp_storage = FileSystemStorage(tempfile.gettempdir())
+temp_storage_dir = tempfile.mkdtemp()
+temp_storage = FileSystemStorage(temp_storage_dir)
 
 ARTICLE_STATUS = (
     (1, 'Draft'),
@@ -92,25 +93,54 @@ class PhoneNumber(models.Model):
 
 class TextFile(models.Model):
     description = models.CharField(max_length=20)
-    file = models.FileField(storage=temp_storage, upload_to='tests')
+    file = models.FileField(storage=temp_storage, upload_to='tests', max_length=15)
 
     def __unicode__(self):
         return self.description
 
-class ImageFile(models.Model):
-    description = models.CharField(max_length=20)
-    try:
-        # If PIL is available, try testing PIL.
-        # Checking for the existence of Image is enough for CPython, but
-        # for PyPy, you need to check for the underlying modules
-        # If PIL is not available, this test is equivalent to TextFile above.
-        from PIL import Image, _imaging
-        image = models.ImageField(storage=temp_storage, upload_to='tests')
-    except ImportError:
-        image = models.FileField(storage=temp_storage, upload_to='tests')
+try:
+    # If PIL is available, try testing ImageFields.
+    # Checking for the existence of Image is enough for CPython, but
+    # for PyPy, you need to check for the underlying modules
+    # If PIL is not available, ImageField tests are omitted.
+    from PIL import Image, _imaging
+    test_images = True
 
-    def __unicode__(self):
-        return self.description
+    class ImageFile(models.Model):
+        def custom_upload_path(self, filename):
+            path = self.path or 'tests'
+            return '%s/%s' % (path, filename)
+
+        description = models.CharField(max_length=20)
+
+        # Deliberately put the image field *after* the width/height fields to
+        # trigger the bug in #10404 with width/height not getting assigned.
+        width = models.IntegerField(editable=False)
+        height = models.IntegerField(editable=False)
+        image = models.ImageField(storage=temp_storage, upload_to=custom_upload_path,
+                                  width_field='width', height_field='height')
+        path = models.CharField(max_length=16, blank=True, default='')
+
+        def __unicode__(self):
+            return self.description
+
+    class OptionalImageFile(models.Model):
+        def custom_upload_path(self, filename):
+            path = self.path or 'tests'
+            return '%s/%s' % (path, filename)
+
+        description = models.CharField(max_length=20)
+        image = models.ImageField(storage=temp_storage, upload_to=custom_upload_path,
+                                  width_field='width', height_field='height',
+                                  blank=True, null=True)
+        width = models.IntegerField(editable=False, null=True)
+        height = models.IntegerField(editable=False, null=True)
+        path = models.CharField(max_length=16, blank=True, default='')
+
+        def __unicode__(self):
+            return self.description
+except ImportError:
+    test_images = False
 
 class CommaSeparatedInteger(models.Model):
     field = models.CommaSeparatedIntegerField(max_length=20)
@@ -144,7 +174,33 @@ class Inventory(models.Model):
 
    def __unicode__(self):
       return self.name
-      
+
+class Book(models.Model):
+    title = models.CharField(max_length=40)
+    author = models.ForeignKey(Writer, blank=True, null=True)
+    special_id = models.IntegerField(blank=True, null=True, unique=True)
+
+    class Meta:
+        unique_together = ('title', 'author')
+
+class ExplicitPK(models.Model):
+    key = models.CharField(max_length=20, primary_key=True)
+    desc = models.CharField(max_length=20, blank=True, unique=True)
+    class Meta:
+        unique_together = ('key', 'desc')
+
+    def __unicode__(self):
+        return self.key
+
+class Post(models.Model):
+    title = models.CharField(max_length=50, unique_for_date='posted', blank=True)
+    slug = models.CharField(max_length=50, unique_for_year='posted', blank=True)
+    subtitle = models.CharField(max_length=50, unique_for_month='posted', blank=True)
+    posted = models.DateField()
+
+    def __unicode__(self):
+        return self.name
+
 __test__ = {'API_TESTS': """
 >>> from django import forms
 >>> from django.forms.models import ModelForm, model_to_dict
@@ -170,6 +226,17 @@ Extra fields.
 >>> CategoryForm.base_fields.keys()
 ['name', 'slug', 'url', 'some_extra_field']
 
+Extra field that has a name collision with a related object accessor.
+
+>>> class WriterForm(ModelForm):
+...     book = forms.CharField(required=False)
+...
+...     class Meta:
+...         model = Writer
+
+>>> wf = WriterForm({'name': 'Richard Lockridge'})
+>>> wf.is_valid()
+True
 
 Replacing a field.
 
@@ -275,6 +342,29 @@ We can also subclass the Meta inner class to change the fields list.
 <tr><th><label for="id_name">Name:</label></th><td><input id="id_name" type="text" name="name" maxlength="20" /></td></tr>
 <tr><th><label for="id_slug">Slug:</label></th><td><input id="id_slug" type="text" name="slug" maxlength="20" /></td></tr>
 <tr><th><label for="id_checkbox">Checkbox:</label></th><td><input type="checkbox" name="checkbox" id="id_checkbox" /></td></tr>
+
+# test using fields to provide ordering to the fields
+>>> class CategoryForm(ModelForm):
+...     class Meta:
+...         model = Category
+...         fields = ['url', 'name']
+
+>>> CategoryForm.base_fields.keys()
+['url', 'name']
+
+
+>>> print CategoryForm()
+<tr><th><label for="id_url">The URL:</label></th><td><input id="id_url" type="text" name="url" maxlength="40" /></td></tr>
+<tr><th><label for="id_name">Name:</label></th><td><input id="id_name" type="text" name="name" maxlength="20" /></td></tr>
+
+>>> class CategoryForm(ModelForm):
+...     class Meta:
+...         model = Category
+...         fields = ['slug', 'url', 'name']
+...         exclude = ['url']
+
+>>> CategoryForm.base_fields.keys()
+['slug', 'name']
 
 # Old form_for_x tests #######################################################
 
@@ -523,6 +613,30 @@ Add some categories and test the many-to-many form output.
 <li>Categories: <select multiple="multiple" name="categories">
 <option value="1" selected="selected">Entertainment</option>
 <option value="2">It&#39;s a test</option>
+<option value="3">Third test</option>
+</select>  Hold down "Control", or "Command" on a Mac, to select more than one.</li>
+
+Initial values can be provided for model forms
+>>> f = TestArticleForm(auto_id=False, initial={'headline': 'Your headline here', 'categories': ['1','2']})
+>>> print f.as_ul()
+<li>Headline: <input type="text" name="headline" value="Your headline here" maxlength="50" /></li>
+<li>Slug: <input type="text" name="slug" maxlength="50" /></li>
+<li>Pub date: <input type="text" name="pub_date" /></li>
+<li>Writer: <select name="writer">
+<option value="" selected="selected">---------</option>
+<option value="1">Mike Royko</option>
+<option value="2">Bob Woodward</option>
+</select></li>
+<li>Article: <textarea rows="10" cols="40" name="article"></textarea></li>
+<li>Status: <select name="status">
+<option value="" selected="selected">---------</option>
+<option value="1">Draft</option>
+<option value="2">Pending</option>
+<option value="3">Live</option>
+</select></li>
+<li>Categories: <select multiple="multiple" name="categories">
+<option value="1" selected="selected">Entertainment</option>
+<option value="2" selected="selected">It&#39;s a test</option>
 <option value="3">Third test</option>
 </select>  Hold down "Control", or "Command" on a Mac, to select more than one.</li>
 
@@ -779,6 +893,10 @@ ValidationError: [u'Select a valid choice. 100 is not one of the available choic
 Traceback (most recent call last):
 ...
 ValidationError: [u'Enter a list of values.']
+>>> f.clean(['fail'])
+Traceback (most recent call last):
+...
+ValidationError: [u'"fail" is not a valid value for a primary key.']
 
 # Add a Category object *after* the ModelMultipleChoiceField has already been
 # instantiated. This proves clean() checks the database during clean() rather
@@ -940,6 +1058,11 @@ True
 >>> instance.file
 <FieldFile: tests/test1.txt>
 
+# Check if the max_length attribute has been inherited from the model.
+>>> f = TextFileForm(data={'description': u'Assistance'}, files={'file': SimpleUploadedFile('test-maxlength.txt', 'hello world')})
+>>> f.is_valid()
+False
+
 # Edit an instance that already has the file defined in the model. This will not
 # save the file again, but leave it exactly as it is.
 
@@ -996,6 +1119,18 @@ True
 >>> instance.file
 <FieldFile: tests/test3.txt>
 
+# Instance can be edited w/out re-uploading the file and existing file should be preserved.
+
+>>> f = TextFileForm(data={'description': u'New Description'}, instance=instance)
+>>> f.fields['file'].required = False
+>>> f.is_valid()
+True
+>>> instance = f.save()
+>>> instance.description
+u'New Description'
+>>> instance.file
+<FieldFile: tests/test3.txt>
+
 # Delete the current file since this is not done by Django.
 >>> instance.file.delete()
 >>> instance.delete()
@@ -1010,7 +1145,10 @@ True
 # Delete the current file since this is not done by Django.
 >>> instance.file.delete()
 >>> instance.delete()
+"""}
 
+if test_images:
+    __test__['API_TESTS'] += """
 # ImageField ###################################################################
 
 # ImageField and FileField are nearly identical, but they differ slighty when
@@ -1022,6 +1160,7 @@ True
 ...         model = ImageFile
 
 >>> image_data = open(os.path.join(os.path.dirname(__file__), "test.png"), 'rb').read()
+>>> image_data2 = open(os.path.join(os.path.dirname(__file__), "test2.png"), 'rb').read()
 
 >>> f = ImageFileForm(data={'description': u'An image'}, files={'image': SimpleUploadedFile('test.png', image_data)})
 >>> f.is_valid()
@@ -1031,9 +1170,14 @@ True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: tests/test.png>
+>>> instance.width
+16
+>>> instance.height
+16
 
-# Delete the current file since this is not done by Django.
->>> instance.image.delete()
+# Delete the current file since this is not done by Django, but don't save
+# because the dimension fields are not null=True.
+>>> instance.image.delete(save=False)
 
 >>> f = ImageFileForm(data={'description': u'An image'}, files={'image': SimpleUploadedFile('test.png', image_data)})
 >>> f.is_valid()
@@ -1043,8 +1187,12 @@ True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: tests/test.png>
+>>> instance.width
+16
+>>> instance.height
+16
 
-# Edit an instance that already has the image defined in the model. This will not
+# Edit an instance that already has the (required) image defined in the model. This will not
 # save the image again, but leave it exactly as it is.
 
 >>> f = ImageFileForm(data={'description': u'Look, it changed'}, instance=instance)
@@ -1055,63 +1203,116 @@ True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: tests/test.png>
+>>> instance.height
+16
+>>> instance.width
+16
 
-# Delete the current image since this is not done by Django.
-
->>> instance.image.delete()
+# Delete the current file since this is not done by Django, but don't save
+# because the dimension fields are not null=True.
+>>> instance.image.delete(save=False)
 
 # Override the file by uploading a new one.
 
->>> f = ImageFileForm(data={'description': u'Changed it'}, files={'image': SimpleUploadedFile('test2.png', image_data)}, instance=instance)
+>>> f = ImageFileForm(data={'description': u'Changed it'}, files={'image': SimpleUploadedFile('test2.png', image_data2)}, instance=instance)
 >>> f.is_valid()
 True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: tests/test2.png>
+>>> instance.height
+32
+>>> instance.width
+48
 
-# Delete the current file since this is not done by Django.
->>> instance.image.delete()
+# Delete the current file since this is not done by Django, but don't save
+# because the dimension fields are not null=True.
+>>> instance.image.delete(save=False)
 >>> instance.delete()
 
->>> f = ImageFileForm(data={'description': u'Changed it'}, files={'image': SimpleUploadedFile('test2.png', image_data)})
+>>> f = ImageFileForm(data={'description': u'Changed it'}, files={'image': SimpleUploadedFile('test2.png', image_data2)})
 >>> f.is_valid()
 True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: tests/test2.png>
+>>> instance.height
+32
+>>> instance.width
+48
 
-# Delete the current file since this is not done by Django.
->>> instance.image.delete()
+# Delete the current file since this is not done by Django, but don't save
+# because the dimension fields are not null=True.
+>>> instance.image.delete(save=False)
 >>> instance.delete()
 
 # Test the non-required ImageField
 
->>> f = ImageFileForm(data={'description': u'Test'})
->>> f.fields['image'].required = False
+>>> class OptionalImageFileForm(ModelForm):
+...     class Meta:
+...         model = OptionalImageFile
+
+>>> f = OptionalImageFileForm(data={'description': u'Test'})
 >>> f.is_valid()
 True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: None>
+>>> instance.width
+>>> instance.height
 
->>> f = ImageFileForm(data={'description': u'And a final one'}, files={'image': SimpleUploadedFile('test3.png', image_data)}, instance=instance)
+>>> f = OptionalImageFileForm(data={'description': u'And a final one'}, files={'image': SimpleUploadedFile('test3.png', image_data)}, instance=instance)
 >>> f.is_valid()
 True
 >>> instance = f.save()
 >>> instance.image
 <...FieldFile: tests/test3.png>
+>>> instance.width
+16
+>>> instance.height
+16
+
+# Editing the instance without re-uploading the image should not affect the image or its width/height properties
+>>> f = OptionalImageFileForm(data={'description': u'New Description'}, instance=instance)
+>>> f.is_valid()
+True
+>>> instance = f.save()
+>>> instance.description
+u'New Description'
+>>> instance.image
+<...FieldFile: tests/test3.png>
+>>> instance.width
+16
+>>> instance.height
+16
 
 # Delete the current file since this is not done by Django.
 >>> instance.image.delete()
 >>> instance.delete()
 
->>> f = ImageFileForm(data={'description': u'And a final one'}, files={'image': SimpleUploadedFile('test3.png', image_data)})
+>>> f = OptionalImageFileForm(data={'description': u'And a final one'}, files={'image': SimpleUploadedFile('test4.png', image_data2)})
 >>> f.is_valid()
 True
 >>> instance = f.save()
 >>> instance.image
-<...FieldFile: tests/test3.png>
+<...FieldFile: tests/test4.png>
+>>> instance.width
+48
+>>> instance.height
+32
 >>> instance.delete()
+
+# Test callable upload_to behavior that's dependent on the value of another field in the model
+>>> f = ImageFileForm(data={'description': u'And a final one', 'path': 'foo'}, files={'image': SimpleUploadedFile('test4.png', image_data)})
+>>> f.is_valid()
+True
+>>> instance = f.save()
+>>> instance.image
+<...FieldFile: foo/test4.png>
+>>> instance.delete()
+"""
+
+__test__['API_TESTS'] += """
 
 # Media on a ModelForm ########################################################
 
@@ -1200,6 +1401,51 @@ False
 >>> form.is_valid()
 True
 
+# Unique & unique together with null values
+>>> class BookForm(ModelForm):
+...     class Meta:
+...        model = Book
+>>> w = Writer.objects.get(name='Mike Royko')
+>>> form = BookForm({'title': 'I May Be Wrong But I Doubt It', 'author' : w.pk})
+>>> form.is_valid()
+True
+>>> form.save()
+<Book: Book object>
+>>> form = BookForm({'title': 'I May Be Wrong But I Doubt It', 'author' : w.pk})
+>>> form.is_valid()
+False
+>>> form._errors
+{'__all__': [u'Book with this Title and Author already exists.']}
+>>> form = BookForm({'title': 'I May Be Wrong But I Doubt It'})
+>>> form.is_valid()
+True
+>>> form.save()
+<Book: Book object>
+>>> form = BookForm({'title': 'I May Be Wrong But I Doubt It'})
+>>> form.is_valid()
+True
+
+# Test for primary_key being in the form and failing validation.
+>>> class ExplicitPKForm(ModelForm):
+...     class Meta:
+...         model = ExplicitPK
+...         fields = ('key', 'desc',)
+>>> form = ExplicitPKForm({'key': u'', 'desc': u'' })
+>>> form.is_valid()
+False
+
+# Ensure keys and blank character strings are tested for uniqueness.
+>>> form = ExplicitPKForm({'key': u'key1', 'desc': u''})
+>>> form.is_valid()
+True
+>>> form.save()
+<ExplicitPK: key1>
+>>> form = ExplicitPKForm({'key': u'key1', 'desc': u''})
+>>> form.is_valid()
+False
+>>> sorted(form.errors.items())
+[('__all__', [u'Explicit pk with this Key and Desc already exists.']), ('desc', [u'Explicit pk with this Desc already exists.']), ('key', [u'Explicit pk with this Key already exists.'])]
+
 # Choices on CharField and IntegerField
 >>> class ArticleForm(ModelForm):
 ...     class Meta:
@@ -1251,4 +1497,53 @@ ValidationError: [u'Select a valid choice. z is not one of the available choices
 >>> core = form.save()
 >>> core.parent
 <Inventory: Pear>
-"""}
+
+>>> class CategoryForm(ModelForm):
+...     description = forms.CharField()
+...     class Meta:
+...         model = Category
+...         fields = ['description', 'url']
+
+>>> CategoryForm.base_fields.keys()
+['description', 'url']
+
+>>> print CategoryForm()
+<tr><th><label for="id_description">Description:</label></th><td><input type="text" name="description" id="id_description" /></td></tr>
+<tr><th><label for="id_url">The URL:</label></th><td><input id="id_url" type="text" name="url" maxlength="40" /></td></tr>
+
+### Validation on unique_for_date
+
+>>> p = Post.objects.create(title="Django 1.0 is released", slug="Django 1.0", subtitle="Finally", posted=datetime.date(2008, 9, 3))
+>>> class PostForm(ModelForm):
+...     class Meta:
+...         model = Post
+
+>>> f = PostForm({'title': "Django 1.0 is released", 'posted': '2008-09-03'})
+>>> f.is_valid()
+False
+>>> f.errors
+{'title': [u'Title must be unique for Posted date.']}
+>>> f = PostForm({'title': "Work on Django 1.1 begins", 'posted': '2008-09-03'})
+>>> f.is_valid()
+True
+>>> f = PostForm({'title': "Django 1.0 is released", 'posted': '2008-09-04'})
+>>> f.is_valid()
+True
+>>> f = PostForm({'slug': "Django 1.0", 'posted': '2008-01-01'})
+>>> f.is_valid()
+False
+>>> f.errors
+{'slug': [u'Slug must be unique for Posted year.']}
+>>> f = PostForm({'subtitle': "Finally", 'posted': '2008-09-30'})
+>>> f.is_valid()
+False
+>>> f.errors
+{'subtitle': [u'Subtitle must be unique for Posted month.']}
+>>> f = PostForm({'subtitle': "Finally", "title": "Django 1.0 is released", "slug": "Django 1.0", 'posted': '2008-09-03'}, instance=p)
+>>> f.is_valid()
+True
+
+# Clean up
+>>> import shutil
+>>> shutil.rmtree(temp_storage_dir)
+"""

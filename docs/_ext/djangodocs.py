@@ -6,10 +6,18 @@ import docutils.nodes
 import docutils.transforms
 import sphinx
 import sphinx.addnodes
-import sphinx.builder
+try:
+    from sphinx import builders
+except ImportError:
+    import sphinx.builder as builders
 import sphinx.directives
 import sphinx.environment
-import sphinx.htmlwriter
+try:
+    import sphinx.writers.html as sphinx_htmlwriter
+except ImportError:
+    import sphinx.htmlwriter as sphinx_htmlwriter
+import sphinx.roles
+from docutils import nodes
 
 def setup(app):
     app.add_crossref_type(
@@ -42,13 +50,42 @@ def setup(app):
         directivename = "django-admin-option",
         rolename      = "djadminopt",
         indextemplate = "pair: %s; django-admin command-line option",
-        parse_node    = lambda env, sig, signode: sphinx.directives.parse_option_desc(signode, sig),
+        parse_node    = parse_django_adminopt_node,
     )
+    app.add_config_value('django_next_version', '0.0', True)
+    app.add_directive('versionadded', parse_version_directive, 1, (1, 1, 1))
+    app.add_directive('versionchanged', parse_version_directive, 1, (1, 1, 1))
     app.add_transform(SuppressBlockquotes)
     
     # Monkeypatch PickleHTMLBuilder so that it doesn't die in Sphinx 0.4.2
     if sphinx.__version__ == '0.4.2':
         monkeypatch_pickle_builder()
+
+def parse_version_directive(name, arguments, options, content, lineno,
+                      content_offset, block_text, state, state_machine):
+    env = state.document.settings.env
+    is_nextversion = env.config.django_next_version == arguments[0]
+    ret = []
+    node = sphinx.addnodes.versionmodified()
+    ret.append(node)
+    if not is_nextversion:
+        if len(arguments) == 1:
+            linktext = 'Please, see the release notes <releases-%s>' % (arguments[0])
+            xrefs = sphinx.roles.xfileref_role('ref', linktext, linktext, lineno, state)
+            node.extend(xrefs[0])
+        node['version'] = arguments[0]
+    else:
+        node['version'] = "Development version"
+    node['type'] = name
+    if len(arguments) == 2:
+        inodes, messages = state.inline_text(arguments[1], lineno+1)
+        node.extend(inodes)
+        if content:
+            state.nested_parse(content, content_offset, node)
+        ret = ret + messages
+    env.note_versionchange(node['type'], node['version'], node, lineno)
+    return ret
+
                 
 class SuppressBlockquotes(docutils.transforms.Transform):
     """
@@ -71,7 +108,7 @@ class SuppressBlockquotes(docutils.transforms.Transform):
             if len(node.children) == 1 and isinstance(node.children[0], self.suppress_blockquote_child_nodes):
                 node.replace_self(node.children[0])
 
-class DjangoHTMLTranslator(sphinx.htmlwriter.SmartyPantsHTMLTranslator):
+class DjangoHTMLTranslator(sphinx_htmlwriter.SmartyPantsHTMLTranslator):
     """
     Django-specific reST to HTML tweaks.
     """
@@ -94,10 +131,10 @@ class DjangoHTMLTranslator(sphinx.htmlwriter.SmartyPantsHTMLTranslator):
     #
     def visit_literal_block(self, node):
         self.no_smarty += 1
-        sphinx.htmlwriter.SmartyPantsHTMLTranslator.visit_literal_block(self, node)
-        
+        sphinx_htmlwriter.SmartyPantsHTMLTranslator.visit_literal_block(self, node)
+
     def depart_literal_block(self, node):
-        sphinx.htmlwriter.SmartyPantsHTMLTranslator.depart_literal_block(self, node) 
+        sphinx_htmlwriter.SmartyPantsHTMLTranslator.depart_literal_block(self, node)
         self.no_smarty -= 1
         
     #
@@ -130,22 +167,22 @@ class DjangoHTMLTranslator(sphinx.htmlwriter.SmartyPantsHTMLTranslator):
     
     # Give each section a unique ID -- nice for custom CSS hooks
     # This is different on docutils 0.5 vs. 0.4...
-    
-    # The docutils 0.4 override.
-    if hasattr(sphinx.htmlwriter.SmartyPantsHTMLTranslator, 'start_tag_with_title'):
+
+    if hasattr(sphinx_htmlwriter.SmartyPantsHTMLTranslator, 'start_tag_with_title') and sphinx.__version__ == '0.4.2':
         def start_tag_with_title(self, node, tagname, **atts):
             node = {
                 'classes': node.get('classes', []), 
                 'ids': ['s-%s' % i for i in node.get('ids', [])]
             }
             return self.starttag(node, tagname, **atts)
-            
-    # The docutils 0.5 override.
-    else:        
+
+    else:
         def visit_section(self, node):
             old_ids = node.get('ids', [])
             node['ids'] = ['s-' + i for i in old_ids]
-            sphinx.htmlwriter.SmartyPantsHTMLTranslator.visit_section(self, node)
+            if sphinx.__version__ != '0.4.2':
+                node['ids'].extend(old_ids)
+            sphinx_htmlwriter.SmartyPantsHTMLTranslator.visit_section(self, node)
             node['ids'] = old_ids
 
 def parse_django_admin_node(env, sig, signode):
@@ -154,6 +191,25 @@ def parse_django_admin_node(env, sig, signode):
     title = "django-admin.py %s" % sig
     signode += sphinx.addnodes.desc_name(title, title)
     return sig
+
+def parse_django_adminopt_node(env, sig, signode):
+    """A copy of sphinx.directives.CmdoptionDesc.parse_signature()"""
+    from sphinx import addnodes
+    from sphinx.directives.desc import option_desc_re
+    count = 0
+    firstname = ''
+    for m in option_desc_re.finditer(sig):
+        optname, args = m.groups()
+        if count:
+            signode += addnodes.desc_addname(', ', ', ')
+        signode += addnodes.desc_name(optname, optname)
+        signode += addnodes.desc_addname(args, args)
+        if not count:
+            firstname = optname
+        count += 1
+    if not firstname:
+        raise ValueError
+    return firstname
 
 def monkeypatch_pickle_builder():
     import shutil
@@ -183,12 +239,12 @@ def monkeypatch_pickle_builder():
 
         # copy the environment file from the doctree dir to the output dir
         # as needed by the web app
-        shutil.copyfile(path.join(self.doctreedir, sphinx.builder.ENV_PICKLE_FILENAME),
-                        path.join(self.outdir, sphinx.builder.ENV_PICKLE_FILENAME))
+        shutil.copyfile(path.join(self.doctreedir, builders.ENV_PICKLE_FILENAME),
+                        path.join(self.outdir, builders.ENV_PICKLE_FILENAME))
 
         # touch 'last build' file, used by the web application to determine
         # when to reload its environment and clear the cache
-        open(path.join(self.outdir, sphinx.builder.LAST_BUILD_FILENAME), 'w').close()
+        open(path.join(self.outdir, builders.LAST_BUILD_FILENAME), 'w').close()
 
-    sphinx.builder.PickleHTMLBuilder.handle_finish = handle_finish
-    
+    builders.PickleHTMLBuilder.handle_finish = handle_finish
+

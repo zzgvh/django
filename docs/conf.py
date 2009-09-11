@@ -41,9 +41,11 @@ copyright = 'Django Software Foundation and contributors'
 # other places throughout the built documents.
 #
 # The short X.Y version.
-version = '1.0'
+version = '1.1'
 # The full version, including alpha/beta/rc tags.
 release = version
+# The next version to be released
+django_next_version = '1.2'
 
 # There are two options for replacing |today|: either, you set today to some
 # non-false value, then it is used:
@@ -67,6 +69,11 @@ show_authors = False
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'trac'
+
+# Sphinx will recurse into subversion configuration folders and try to read  
+# any document file within. These should be ignored. 
+# Note: exclude_dirnames is new in Sphinx 0.5 
+exclude_dirnames = ['.svn']
 
 # Options for HTML output
 # -----------------------

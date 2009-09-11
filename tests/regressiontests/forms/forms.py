@@ -593,17 +593,25 @@ u'Yesterday'
 u'Yesterday'
 
 Validation errors are HTML-escaped when output as HTML.
+>>> from django.utils.safestring import mark_safe
 >>> class EscapingForm(Form):
-...     special_name = CharField()
+...     special_name = CharField(label="<em>Special</em> Field")
+...     special_safe_name = CharField(label=mark_safe("<em>Special</em> Field"))
 ...     def clean_special_name(self):
 ...         raise ValidationError("Something's wrong with '%s'" % self.cleaned_data['special_name'])
+...     def clean_special_safe_name(self):
+...         raise ValidationError(mark_safe("'<b>%s</b>' is a safe string" % self.cleaned_data['special_safe_name']))
 
->>> f = EscapingForm({'special_name': "Nothing to escape"}, auto_id=False)
+>>> f = EscapingForm({'special_name': "Nothing to escape", 'special_safe_name': "Nothing to escape"}, auto_id=False)
 >>> print f
-<tr><th>Special name:</th><td><ul class="errorlist"><li>Something&#39;s wrong with &#39;Nothing to escape&#39;</li></ul><input type="text" name="special_name" value="Nothing to escape" /></td></tr>
->>> f = EscapingForm({'special_name': "Should escape < & > and <script>alert('xss')</script>"}, auto_id=False)
+<tr><th>&lt;em&gt;Special&lt;/em&gt; Field:</th><td><ul class="errorlist"><li>Something&#39;s wrong with &#39;Nothing to escape&#39;</li></ul><input type="text" name="special_name" value="Nothing to escape" /></td></tr>
+<tr><th><em>Special</em> Field:</th><td><ul class="errorlist"><li>'<b>Nothing to escape</b>' is a safe string</li></ul><input type="text" name="special_safe_name" value="Nothing to escape" /></td></tr>
+>>> f = EscapingForm(
+...     {'special_name': "Should escape < & > and <script>alert('xss')</script>",
+...     'special_safe_name': "<i>Do not escape</i>"}, auto_id=False)
 >>> print f
-<tr><th>Special name:</th><td><ul class="errorlist"><li>Something&#39;s wrong with &#39;Should escape &lt; &amp; &gt; and &lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;&#39;</li></ul><input type="text" name="special_name" value="Should escape &lt; &amp; &gt; and &lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;" /></td></tr>
+<tr><th>&lt;em&gt;Special&lt;/em&gt; Field:</th><td><ul class="errorlist"><li>Something&#39;s wrong with &#39;Should escape &lt; &amp; &gt; and &lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;&#39;</li></ul><input type="text" name="special_name" value="Should escape &lt; &amp; &gt; and &lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;" /></td></tr>
+<tr><th><em>Special</em> Field:</th><td><ul class="errorlist"><li>'<b><i>Do not escape</i></b>' is a safe string</li></ul><input type="text" name="special_safe_name" value="&lt;i&gt;Do not escape&lt;/i&gt;" /></td></tr>
 
 """ + \
 r""" # [This concatenation is to keep the string below the jython's 32K limit].
@@ -1138,37 +1146,63 @@ possible to specify callable data.
 >>> class UserRegistration(Form):
 ...    username = CharField(max_length=10)
 ...    password = CharField(widget=PasswordInput)
+...    options = MultipleChoiceField(choices=[('f','foo'),('b','bar'),('w','whiz')])
 
 We need to define functions that get called later.
 >>> def initial_django():
 ...     return 'django'
 >>> def initial_stephane():
 ...     return 'stephane'
+>>> def initial_options():
+...     return ['f','b']
+>>> def initial_other_options():
+...     return ['b','w']
+
 
 Here, we're not submitting any data, so the initial value will be displayed.
->>> p = UserRegistration(initial={'username': initial_django}, auto_id=False)
+>>> p = UserRegistration(initial={'username': initial_django, 'options': initial_options}, auto_id=False)
 >>> print p.as_ul()
 <li>Username: <input type="text" name="username" value="django" maxlength="10" /></li>
 <li>Password: <input type="password" name="password" /></li>
+<li>Options: <select multiple="multiple" name="options">
+<option value="f" selected="selected">foo</option>
+<option value="b" selected="selected">bar</option>
+<option value="w">whiz</option>
+</select></li>
 
 The 'initial' parameter is meaningless if you pass data.
->>> p = UserRegistration({}, initial={'username': initial_django}, auto_id=False)
+>>> p = UserRegistration({}, initial={'username': initial_django, 'options': initial_options}, auto_id=False)
 >>> print p.as_ul()
 <li><ul class="errorlist"><li>This field is required.</li></ul>Username: <input type="text" name="username" maxlength="10" /></li>
 <li><ul class="errorlist"><li>This field is required.</li></ul>Password: <input type="password" name="password" /></li>
+<li><ul class="errorlist"><li>This field is required.</li></ul>Options: <select multiple="multiple" name="options">
+<option value="f">foo</option>
+<option value="b">bar</option>
+<option value="w">whiz</option>
+</select></li>
 >>> p = UserRegistration({'username': u''}, initial={'username': initial_django}, auto_id=False)
 >>> print p.as_ul()
 <li><ul class="errorlist"><li>This field is required.</li></ul>Username: <input type="text" name="username" maxlength="10" /></li>
 <li><ul class="errorlist"><li>This field is required.</li></ul>Password: <input type="password" name="password" /></li>
->>> p = UserRegistration({'username': u'foo'}, initial={'username': initial_django}, auto_id=False)
+<li><ul class="errorlist"><li>This field is required.</li></ul>Options: <select multiple="multiple" name="options">
+<option value="f">foo</option>
+<option value="b">bar</option>
+<option value="w">whiz</option>
+</select></li>
+>>> p = UserRegistration({'username': u'foo', 'options':['f','b']}, initial={'username': initial_django}, auto_id=False)
 >>> print p.as_ul()
 <li>Username: <input type="text" name="username" value="foo" maxlength="10" /></li>
 <li><ul class="errorlist"><li>This field is required.</li></ul>Password: <input type="password" name="password" /></li>
+<li>Options: <select multiple="multiple" name="options">
+<option value="f" selected="selected">foo</option>
+<option value="b" selected="selected">bar</option>
+<option value="w">whiz</option>
+</select></li>
 
 A callable 'initial' value is *not* used as a fallback if data is not provided.
 In this example, we don't provide a value for 'username', and the form raises a
 validation error rather than using the initial value for 'username'.
->>> p = UserRegistration({'password': 'secret'}, initial={'username': initial_django})
+>>> p = UserRegistration({'password': 'secret'}, initial={'username': initial_django, 'options': initial_options})
 >>> p.errors['username']
 [u'This field is required.']
 >>> p.is_valid()
@@ -1179,14 +1213,26 @@ then the latter will get precedence.
 >>> class UserRegistration(Form):
 ...    username = CharField(max_length=10, initial=initial_django)
 ...    password = CharField(widget=PasswordInput)
+...    options = MultipleChoiceField(choices=[('f','foo'),('b','bar'),('w','whiz')], initial=initial_other_options)
+
 >>> p = UserRegistration(auto_id=False)
 >>> print p.as_ul()
 <li>Username: <input type="text" name="username" value="django" maxlength="10" /></li>
 <li>Password: <input type="password" name="password" /></li>
->>> p = UserRegistration(initial={'username': initial_stephane}, auto_id=False)
+<li>Options: <select multiple="multiple" name="options">
+<option value="f">foo</option>
+<option value="b" selected="selected">bar</option>
+<option value="w" selected="selected">whiz</option>
+</select></li>
+>>> p = UserRegistration(initial={'username': initial_stephane, 'options': initial_options}, auto_id=False)
 >>> print p.as_ul()
 <li>Username: <input type="text" name="username" value="stephane" maxlength="10" /></li>
 <li>Password: <input type="password" name="password" /></li>
+<li>Options: <select multiple="multiple" name="options">
+<option value="f" selected="selected">foo</option>
+<option value="b" selected="selected">bar</option>
+<option value="w">whiz</option>
+</select></li>
 
 # Help text ###################################################################
 
@@ -1748,5 +1794,17 @@ initial that returns False on a boolean call needs to be treated literally.
 >>> form = PriceForm(data, initial={'amount': 0.0}, empty_permitted=True)
 >>> form.is_valid()
 True
+
+# Extracting hidden and visible fields ######################################
+
+>>> class SongForm(Form):
+...     token = CharField(widget=HiddenInput)
+...     artist = CharField()
+...     name = CharField()
+>>> form = SongForm()
+>>> [f.name for f in form.hidden_fields()]
+['token']
+>>> [f.name for f in form.visible_fields()]
+['artist', 'name']
 
 """

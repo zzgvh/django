@@ -1,3 +1,4 @@
+# coding: utf-8
 from os import path
 
 from django.conf.urls.defaults import *
@@ -20,6 +21,8 @@ date_based_info_dict = {
     'date_field': 'date_created',
     'month_format': '%m',
 }
+numeric_days_info_dict = dict(date_based_info_dict, day_format='%d')
+
 date_based_datefield_info_dict = dict(date_based_info_dict, queryset=DateArticle.objects.all())
 
 urlpatterns = patterns('',
@@ -36,6 +39,10 @@ urlpatterns = patterns('',
 
     # Static views
     (r'^site_media/(?P<path>.*)$', 'django.views.static.serve', {'document_root': media_dir}),
+
+    # Special URLs for particular regression cases.
+    url(u'^中文/$', 'regressiontests.views.views.redirect'),
+    url(u'^中文/target/$', 'regressiontests.views.views.index_page'),
 )
 
 # Date-based generic views.
@@ -46,6 +53,9 @@ urlpatterns += patterns('django.views.generic.date_based',
     (r'^date_based/object_detail/(?P<year>\d{4})/(?P<month>\d{1,2})/(?P<day>\d{1,2})/(?P<slug>[-\w]+)/allow_future/$',
         'object_detail',
         dict(allow_future=True, slug_field='slug', **date_based_info_dict)),
+    (r'^date_based/archive_day/(?P<year>\d{4})/(?P<month>\d{1,2})/(?P<day>\d{1,2})/$',
+        'archive_day',
+        numeric_days_info_dict),
     (r'^date_based/archive_month/(?P<year>\d{4})/(?P<month>\d{1,2})/$',
         'archive_month',
         date_based_info_dict),
@@ -81,4 +91,9 @@ urlpatterns += patterns('django.views.generic.create_update',
         dict(model=UrlArticle)),
     (r'^create_update/no_url/update/article/(?P<slug>[-\w]+)/$',
         'update_object', dict(slug_field='slug', model=UrlArticle)),
+)
+
+# a view that raises an exception for the debug view
+urlpatterns += patterns('',
+    (r'^raises/$', views.raises)
 )

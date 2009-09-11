@@ -6,6 +6,11 @@
 ``QuerySet`` objects to and from "flat" data (i.e. strings).
 """
 
+try:
+    from decimal import Decimal
+except ImportError:
+    from django.utils._decimal import Decimal # Python 2.3 fallback
+
 from django.db import models
 
 class Category(models.Model):
@@ -57,6 +62,7 @@ class Actor(models.Model):
 class Movie(models.Model):
     actor = models.ForeignKey(Actor)
     title = models.CharField(max_length=50)
+    price = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
 
     class Meta:
        ordering = ('title',)
@@ -66,6 +72,45 @@ class Movie(models.Model):
 
 class Score(models.Model):
     score = models.FloatField()
+
+
+class Team(object):
+    def __init__(self, title):
+        self.title = title
+
+    def __unicode__(self):
+        raise NotImplementedError("Not so simple")
+
+    def __str__(self):
+        raise NotImplementedError("Not so simple")
+
+    def to_string(self):
+        return "%s" % self.title
+
+class TeamField(models.CharField):
+    __metaclass__ = models.SubfieldBase
+
+    def __init__(self):
+        super(TeamField, self).__init__(max_length=100)
+
+    def get_db_prep_save(self, value):
+        return unicode(value.title)
+
+    def to_python(self, value):
+        if isinstance(value, Team):
+            return value
+        return Team(value)
+
+    def value_to_string(self, obj):
+        return self._get_val_from_obj(obj).to_string()
+
+class Player(models.Model):
+    name = models.CharField(max_length=50)
+    rank = models.IntegerField()
+    team = TeamField()
+
+    def __unicode__(self):
+        return u'%s (%d) playing for %s' % (self.name, self.rank, self.team.to_string())
 
 __test__ = {'API_TESTS':"""
 # Create some data:
@@ -194,7 +239,7 @@ __test__ = {'API_TESTS':"""
 
 # Let's serialize our movie
 >>> print serializers.serialize("json", [mv])
-[{"pk": 1, "model": "serializers.movie", "fields": {"actor": "Za\u017c\u00f3\u0142\u0107", "title": "G\u0119\u015bl\u0105 ja\u017a\u0144"}}]
+[{"pk": 1, "model": "serializers.movie", "fields": {"price": "0.00", "actor": "Za\u017c\u00f3\u0142\u0107", "title": "G\u0119\u015bl\u0105 ja\u017a\u0144"}}]
 
 # Deserialization of movie
 >>> list(serializers.deserialize('json', serializers.serialize('json', [mv])))[0].object.title
@@ -204,7 +249,7 @@ u'G\u0119\u015bl\u0105 ja\u017a\u0144'
 # Primary key is None in case of not saved model
 >>> mv2 = Movie(title="Movie 2", actor=ac)
 >>> print serializers.serialize("json", [mv2])
-[{"pk": null, "model": "serializers.movie", "fields": {"actor": "Za\u017c\u00f3\u0142\u0107", "title": "Movie 2"}}]
+[{"pk": null, "model": "serializers.movie", "fields": {"price": "0.00", "actor": "Za\u017c\u00f3\u0142\u0107", "title": "Movie 2"}}]
 
 # Deserialization of null returns None for pk
 >>> print list(serializers.deserialize('json', serializers.serialize('json', [mv2])))[0].object.id
@@ -216,6 +261,21 @@ None
 [{"pk": null, "model": "serializers.score", "fields": {"score": 3.4}}]
 >>> print list(serializers.deserialize('json', serializers.serialize('json', [sc])))[0].object.score
 3.4
+
+# Custom field with non trivial to string convertion value
+>>> player = Player()
+>>> player.name = "Soslan Djanaev"
+>>> player.rank = 1
+>>> player.team = Team("Spartak Moskva")
+>>> player.save()
+
+>>> serialized = serializers.serialize("json", Player.objects.all())
+>>> print serialized
+[{"pk": 1, "model": "serializers.player", "fields": {"name": "Soslan Djanaev", "rank": 1, "team": "Spartak Moskva"}}]
+
+>>> obj = list(serializers.deserialize("json", serialized))[0]
+>>> print obj
+<DeserializedObject: Soslan Djanaev (1) playing for Spartak Moskva>
 
 """}
 
@@ -252,6 +312,20 @@ try:
 ...     print i
 <DeserializedObject: Just kidding; I love TV poker>
 <DeserializedObject: Time to reform copyright>
+
+# Custom field with non trivial to string convertion value with YAML serializer
+
+>>> print serializers.serialize("yaml", Player.objects.all())
+- fields: {name: Soslan Djanaev, rank: 1, team: Spartak Moskva}
+  model: serializers.player
+  pk: 1
+<BLANKLINE>
+
+>>> serialized = serializers.serialize("yaml", Player.objects.all())
+>>> obj = list(serializers.deserialize("yaml", serialized))[0]
+>>> print obj
+<DeserializedObject: Soslan Djanaev (1) playing for Spartak Moskva>
+
 
 """
 except ImportError:

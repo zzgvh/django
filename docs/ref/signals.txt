@@ -30,6 +30,10 @@ module system.
     If you override these methods on your model, you must call the parent class'
     methods for this signals to be sent.
 
+	Note also that Django stores signal handlers as weak references by default,
+	so if your handler is a local function, it may be garbage collected.  To
+	prevent this, pass ``weak=False`` when you call the signal's :meth:`~django.dispatch.Signal.connect`.
+
 pre_init
 --------
 
@@ -212,7 +216,7 @@ Arguments sent with this signal:
 
     ``verbosity``
         Indicates how much information manage.py is printing on screen. See
-        the :djadminopt:`--verbosity`` flag for details.
+        the :djadminopt:`--verbosity` flag for details.
 
         Functions which listen for :data:`post_syncdb` should adjust what they
         output to the screen based on the value of this argument.

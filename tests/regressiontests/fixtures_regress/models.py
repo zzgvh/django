@@ -7,13 +7,18 @@ class Animal(models.Model):
     name = models.CharField(max_length=150)
     latin_name = models.CharField(max_length=150)
     count = models.IntegerField()
-    
+    weight = models.FloatField()
+
+    # use a non-default name for the default manager
+    specimens = models.Manager()
+
     def __unicode__(self):
         return self.common_name
 
 def animal_pre_save_check(signal, sender, instance, **kwargs):
     "A signal that is used to check the type of data loaded from fixtures"
     print 'Count = %s (%s)' % (instance.count, type(instance.count))
+    print 'Weight = %s (%s)' % (instance.weight, type(instance.weight))
 
 class Plant(models.Model):
     name = models.CharField(max_length=150)
@@ -49,16 +54,24 @@ class Parent(models.Model):
 class Child(Parent):
     data = models.CharField(max_length=10)
 
-# Models to regresison check #7572
+# Models to regression test #7572
 class Channel(models.Model):
     name = models.CharField(max_length=255)
 
 class Article(models.Model):
     title = models.CharField(max_length=255)
     channels = models.ManyToManyField(Channel)
-    
+
     class Meta:
         ordering = ('id',)
+
+# Models to regression test #11428
+class Widget(models.Model):
+    name = models.CharField(max_length=255)
+
+class WidgetProxy(Widget):
+    class Meta:
+        proxy = True
 
 __test__ = {'API_TESTS':"""
 >>> from django.core import management
@@ -69,7 +82,7 @@ __test__ = {'API_TESTS':"""
 # Create a new animal. Without a sequence reset, this new object
 # will take a PK of 1 (on Postgres), and the save will fail.
 # This is a regression test for ticket #3790.
->>> animal = Animal(name='Platypus', latin_name='Ornithorhynchus anatinus', count=2)
+>>> animal = Animal(name='Platypus', latin_name='Ornithorhynchus anatinus', count=2, weight=2.3)
 >>> animal.save()
 
 ###############################################
@@ -113,6 +126,15 @@ No fixture data found for 'bad_fixture2'. (File format may be invalid.)
 >>> management.call_command('loaddata', 'bad_fixture2', verbosity=0)
 No fixture data found for 'bad_fixture2'. (File format may be invalid.)
 
+# Loading a fixture file with no data returns an error
+>>> management.call_command('loaddata', 'empty', verbosity=0)
+No fixture data found for 'empty'. (File format may be invalid.)
+
+# If any of the fixtures contain an error, loading is aborted
+# (Regression for #9011 - error message is correct)
+>>> management.call_command('loaddata', 'bad_fixture2', 'animal', verbosity=0)
+No fixture data found for 'bad_fixture2'. (File format may be invalid.)
+
 >>> sys.stderr = savestderr
 
 ###############################################
@@ -123,7 +145,7 @@ No fixture data found for 'bad_fixture2'. (File format may be invalid.)
 >>> management.call_command('loaddata', 'model-inheritance.json', verbosity=0)
 
 ###############################################
-# Test for ticket #7572 -- MySQL has a problem if the same connection is 
+# Test for ticket #7572 -- MySQL has a problem if the same connection is
 # used to create tables, load data, and then query over that data.
 # To compensate, we close the connection after running loaddata.
 # This ensures that a new connection is opened when test queries are issued.
@@ -140,13 +162,34 @@ No fixture data found for 'bad_fixture2'. (File format may be invalid.)
 [1, 2, 3, 4, 5, 6, 7, 8]
 
 ###############################################
-# Test for ticket #8298 - Field values should be coerced into the correct type
-# by the deserializer, not as part of the database write.
+# Test for tickets #8298, #9942 - Field values should be coerced into the
+# correct type by the deserializer, not as part of the database write.
 
 >>> models.signals.pre_save.connect(animal_pre_save_check)
 >>> management.call_command('loaddata', 'animal.xml', verbosity=0)
 Count = 42 (<type 'int'>)
+Weight = 1.2 (<type 'float'>)
 
 >>> models.signals.pre_save.disconnect(animal_pre_save_check)
+
+###############################################
+# Regression for #11286 -- Ensure that dumpdata honors the default manager
+# Dump the current contents of the database as a JSON fixture
+>>> management.call_command('dumpdata', 'fixtures_regress.animal', format='json')
+[{"pk": 1, "model": "fixtures_regress.animal", "fields": {"count": 3, "weight": 1.2, "name": "Lion", "latin_name": "Panthera leo"}}, {"pk": 2, "model": "fixtures_regress.animal", "fields": {"count": 2, "weight": 2.29..., "name": "Platypus", "latin_name": "Ornithorhynchus anatinus"}}, {"pk": 10, "model": "fixtures_regress.animal", "fields": {"count": 42, "weight": 1.2, "name": "Emu", "latin_name": "Dromaius novaehollandiae"}}]
+
+###############################################
+# Regression for #11428 - Proxy models aren't included
+# when you run dumpdata over an entire app
+
+# Flush out the database first
+>>> management.call_command('reset', 'fixtures_regress', interactive=False, verbosity=0)
+
+# Create an instance of the concrete class
+>>> Widget(name='grommet').save()
+
+# Dump data for the entire app. The proxy class shouldn't be included
+>>> management.call_command('dumpdata', 'fixtures_regress', format='json')
+[{"pk": 1, "model": "fixtures_regress.widget", "fields": {"name": "grommet"}}]
 
 """}

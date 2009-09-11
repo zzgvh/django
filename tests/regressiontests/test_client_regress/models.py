@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Regression tests for the Test Client, especially the customized assertions.
 """
@@ -5,11 +6,19 @@ import os
 from django.conf import settings
 
 from django.test import Client, TestCase
+from django.test.utils import ContextList
 from django.core.urlresolvers import reverse
 from django.core.exceptions import SuspiciousOperation
-from django.template import TemplateDoesNotExist, TemplateSyntaxError
+from django.template import TemplateDoesNotExist, TemplateSyntaxError, Context
 
 class AssertContainsTests(TestCase):
+    def setUp(self):
+        self.old_templates = settings.TEMPLATE_DIRS
+        settings.TEMPLATE_DIRS = (os.path.join(os.path.dirname(__file__), 'templates'),)
+
+    def tearDown(self):
+        settings.TEMPLATE_DIRS = self.old_templates
+
     def test_contains(self):
         "Responses can be inspected for content, including counting repeated substrings"
         response = self.client.get('/test_client_regress/no_template_view/')
@@ -55,6 +64,20 @@ class AssertContainsTests(TestCase):
             self.assertContains(response, 'thrice', 3)
         except AssertionError, e:
             self.assertEquals(str(e), "Found 0 instances of 'thrice' in response (expected 3)")
+
+    def test_unicode_contains(self):
+        "Unicode characters can be found in template context"
+        #Regression test for #10183
+        r = self.client.get('/test_client_regress/check_unicode/')
+        self.assertContains(r, u'さかき')
+        self.assertContains(r, '\xe5\xb3\xa0'.decode('utf-8'))
+
+    def test_unicode_not_contains(self):
+        "Unicode characters can be searched for, and not found in template context"
+        #Regression test for #10183
+        r = self.client.get('/test_client_regress/check_unicode/')
+        self.assertNotContains(r, u'はたけ')
+        self.assertNotContains(r, '\xe3\x81\xaf\xe3\x81\x9f\xe3\x81\x91'.decode('utf-8'))
 
 class AssertTemplateUsedTests(TestCase):
     fixtures = ['testdata.json']
@@ -147,6 +170,107 @@ class AssertRedirectsTests(TestCase):
             self.assertRedirects(response, 'http://testserver/test_client/permanent_redirect_view/')
         except AssertionError, e:
             self.assertEquals(str(e), "Couldn't retrieve redirection page '/test_client/permanent_redirect_view/': response code was 301 (expected 200)")
+
+    def test_redirect_chain(self):
+        "You can follow a redirect chain of multiple redirects"
+        response = self.client.get('/test_client_regress/redirects/further/more/', {}, follow=True)
+        self.assertRedirects(response, '/test_client_regress/no_template_view/',
+            status_code=301, target_status_code=200)
+
+        self.assertEquals(len(response.redirect_chain), 1)
+        self.assertEquals(response.redirect_chain[0], ('http://testserver/test_client_regress/no_template_view/', 301))
+
+    def test_multiple_redirect_chain(self):
+        "You can follow a redirect chain of multiple redirects"
+        response = self.client.get('/test_client_regress/redirects/', {}, follow=True)
+        self.assertRedirects(response, '/test_client_regress/no_template_view/',
+            status_code=301, target_status_code=200)
+
+        self.assertEquals(len(response.redirect_chain), 3)
+        self.assertEquals(response.redirect_chain[0], ('http://testserver/test_client_regress/redirects/further/', 301))
+        self.assertEquals(response.redirect_chain[1], ('http://testserver/test_client_regress/redirects/further/more/', 301))
+        self.assertEquals(response.redirect_chain[2], ('http://testserver/test_client_regress/no_template_view/', 301))
+
+    def test_redirect_chain_to_non_existent(self):
+        "You can follow a chain to a non-existent view"
+        response = self.client.get('/test_client_regress/redirect_to_non_existent_view2/', {}, follow=True)
+        self.assertRedirects(response, '/test_client_regress/non_existent_view/',
+            status_code=301, target_status_code=404)
+
+    def test_redirect_chain_to_self(self):
+        "Redirections to self are caught and escaped"
+        response = self.client.get('/test_client_regress/redirect_to_self/', {}, follow=True)
+        # The chain of redirects stops once the cycle is detected.
+        self.assertRedirects(response, '/test_client_regress/redirect_to_self/',
+            status_code=301, target_status_code=301)
+        self.assertEquals(len(response.redirect_chain), 2)
+
+    def test_circular_redirect(self):
+        "Circular redirect chains are caught and escaped"
+        response = self.client.get('/test_client_regress/circular_redirect_1/', {}, follow=True)
+        # The chain of redirects will get back to the starting point, but stop there.
+        self.assertRedirects(response, '/test_client_regress/circular_redirect_2/',
+            status_code=301, target_status_code=301)
+        self.assertEquals(len(response.redirect_chain), 4)
+
+    def test_redirect_chain_post(self):
+        "A redirect chain will be followed from an initial POST post"
+        response = self.client.post('/test_client_regress/redirects/',
+            {'nothing': 'to_send'}, follow=True)
+        self.assertRedirects(response,
+            '/test_client_regress/no_template_view/', 301, 200)
+        self.assertEquals(len(response.redirect_chain), 3)
+
+    def test_redirect_chain_head(self):
+        "A redirect chain will be followed from an initial HEAD request"
+        response = self.client.head('/test_client_regress/redirects/',
+            {'nothing': 'to_send'}, follow=True)
+        self.assertRedirects(response,
+            '/test_client_regress/no_template_view/', 301, 200)
+        self.assertEquals(len(response.redirect_chain), 3)
+
+    def test_redirect_chain_options(self):
+        "A redirect chain will be followed from an initial OPTIONS request"
+        response = self.client.options('/test_client_regress/redirects/',
+            {'nothing': 'to_send'}, follow=True)
+        self.assertRedirects(response,
+            '/test_client_regress/no_template_view/', 301, 200)
+        self.assertEquals(len(response.redirect_chain), 3)
+
+    def test_redirect_chain_put(self):
+        "A redirect chain will be followed from an initial PUT request"
+        response = self.client.put('/test_client_regress/redirects/',
+            {'nothing': 'to_send'}, follow=True)
+        self.assertRedirects(response,
+            '/test_client_regress/no_template_view/', 301, 200)
+        self.assertEquals(len(response.redirect_chain), 3)
+
+    def test_redirect_chain_delete(self):
+        "A redirect chain will be followed from an initial DELETE request"
+        response = self.client.delete('/test_client_regress/redirects/',
+            {'nothing': 'to_send'}, follow=True)
+        self.assertRedirects(response,
+            '/test_client_regress/no_template_view/', 301, 200)
+        self.assertEquals(len(response.redirect_chain), 3)
+
+    def test_redirect_chain_on_non_redirect_page(self):
+        "An assertion is raised if the original page couldn't be retrieved as expected"
+        # This page will redirect with code 301, not 302
+        response = self.client.get('/test_client/get_view/', follow=True)
+        try:
+            self.assertRedirects(response, '/test_client/get_view/')
+        except AssertionError, e:
+            self.assertEquals(str(e), "Response didn't redirect as expected: Response code was 200 (expected 302)")
+
+    def test_redirect_on_non_redirect_page(self):
+        "An assertion is raised if the original page couldn't be retrieved as expected"
+        # This page will redirect with code 301, not 302
+        response = self.client.get('/test_client/get_view/')
+        try:
+            self.assertRedirects(response, '/test_client/get_view/')
+        except AssertionError, e:
+            self.assertEquals(str(e), "Response didn't redirect as expected: Response code was 200 (expected 302)")
+
 
 class AssertFormErrorTests(TestCase):
     def test_unknown_form(self):
@@ -309,17 +433,17 @@ class ExceptionTests(TestCase):
             self.client.get("/test_client_regress/staff_only/")
         except SuspiciousOperation:
             self.fail("Staff should be able to visit this page")
-    
+
 class TemplateExceptionTests(TestCase):
     def setUp(self):
         self.old_templates = settings.TEMPLATE_DIRS
         settings.TEMPLATE_DIRS = ()
-        
+
     def tearDown(self):
         settings.TEMPLATE_DIRS = self.old_templates
-        
+
     def test_no_404_template(self):
-        "Missing templates are correctly reported by test client"    
+        "Missing templates are correctly reported by test client"
         try:
             response = self.client.get("/no_such_view/")
             self.fail("Should get error about missing template")
@@ -334,7 +458,7 @@ class TemplateExceptionTests(TestCase):
             self.fail("Should get error about syntax error in template")
         except TemplateSyntaxError:
             pass
-        
+
 # We need two different tests to check URLconf substitution -  one to check
 # it was changed, and another one (without self.urls) to check it was reverted on
 # teardown. This pair of tests relies upon the alphabetical ordering of test execution.
@@ -342,7 +466,7 @@ class UrlconfSubstitutionTests(TestCase):
     urls = 'regressiontests.test_client_regress.urls'
 
     def test_urlconf_was_changed(self):
-        "TestCase can enforce a custom URLConf on a per-test basis"
+        "TestCase can enforce a custom URLconf on a per-test basis"
         url = reverse('arg_view', args=['somename'])
         self.assertEquals(url, '/arg_view/somename/')
 
@@ -353,6 +477,26 @@ class zzUrlconfSubstitutionTests(TestCase):
         "URLconf is reverted to original value after modification in a TestCase"
         url = reverse('arg_view', args=['somename'])
         self.assertEquals(url, '/test_client_regress/arg_view/somename/')
+
+class ContextTests(TestCase):
+    fixtures = ['testdata']
+
+    def test_single_context(self):
+        "Context variables can be retrieved from a single context"
+        response = self.client.get("/test_client_regress/request_data/", data={'foo':'whiz'})
+        self.assertEqual(response.context.__class__, Context)
+        self.assertEqual(response.context['get-foo'], 'whiz')
+        self.assertEqual(response.context['request-foo'], 'whiz')
+        self.assertEqual(response.context['data'], 'sausage')
+
+    def test_inherited_context(self):
+        "Context variables can be retrieved from a list of contexts"
+        response = self.client.get("/test_client_regress/request_data_extended/", data={'foo':'whiz'})
+        self.assertEqual(response.context.__class__, ContextList)
+        self.assertEqual(len(response.context), 2)
+        self.assertEqual(response.context['get-foo'], 'whiz')
+        self.assertEqual(response.context['request-foo'], 'whiz')
+        self.assertEqual(response.context['data'], 'bacon')
 
 class SessionTests(TestCase):
     fixtures = ['testdata.json']
@@ -382,4 +526,134 @@ class SessionTests(TestCase):
         response = self.client.get('/test_client_regress/check_session/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, 'YES')
-        
+
+    def test_logout(self):
+        """Logout should work whether the user is logged in or not (#9978)."""
+        self.client.logout()
+        login = self.client.login(username='testclient',password='password')
+        self.failUnless(login, 'Could not log in')
+        self.client.logout()
+        self.client.logout()
+
+class RequestMethodTests(TestCase):
+    def test_get(self):
+        "Request a view via request method GET"
+        response = self.client.get('/test_client_regress/request_methods/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: GET')
+
+    def test_post(self):
+        "Request a view via request method POST"
+        response = self.client.post('/test_client_regress/request_methods/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: POST')
+
+    def test_head(self):
+        "Request a view via request method HEAD"
+        response = self.client.head('/test_client_regress/request_methods/')
+        self.assertEqual(response.status_code, 200)
+        # A HEAD request doesn't return any content.
+        self.assertNotEqual(response.content, 'request method: HEAD')
+        self.assertEqual(response.content, '')
+
+    def test_options(self):
+        "Request a view via request method OPTIONS"
+        response = self.client.options('/test_client_regress/request_methods/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: OPTIONS')
+
+    def test_put(self):
+        "Request a view via request method PUT"
+        response = self.client.put('/test_client_regress/request_methods/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: PUT')
+
+    def test_delete(self):
+        "Request a view via request method DELETE"
+        response = self.client.delete('/test_client_regress/request_methods/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: DELETE')
+
+class QueryStringTests(TestCase):
+    def test_get_like_requests(self):
+        for method_name in ('get','head','options','put','delete'):
+            # A GET-like request can pass a query string as data
+            method = getattr(self.client, method_name)
+            response = method("/test_client_regress/request_data/", data={'foo':'whiz'})
+            self.assertEqual(response.context['get-foo'], 'whiz')
+            self.assertEqual(response.context['request-foo'], 'whiz')
+
+            # A GET-like request can pass a query string as part of the URL
+            response = method("/test_client_regress/request_data/?foo=whiz")
+            self.assertEqual(response.context['get-foo'], 'whiz')
+            self.assertEqual(response.context['request-foo'], 'whiz')
+
+            # Data provided in the URL to a GET-like request is overridden by actual form data
+            response = method("/test_client_regress/request_data/?foo=whiz", data={'foo':'bang'})
+            self.assertEqual(response.context['get-foo'], 'bang')
+            self.assertEqual(response.context['request-foo'], 'bang')
+
+            response = method("/test_client_regress/request_data/?foo=whiz", data={'bar':'bang'})
+            self.assertEqual(response.context['get-foo'], None)
+            self.assertEqual(response.context['get-bar'], 'bang')
+            self.assertEqual(response.context['request-foo'], None)
+            self.assertEqual(response.context['request-bar'], 'bang')
+
+    def test_post_like_requests(self):
+        # A POST-like request can pass a query string as data
+        response = self.client.post("/test_client_regress/request_data/", data={'foo':'whiz'})
+        self.assertEqual(response.context['get-foo'], None)
+        self.assertEqual(response.context['post-foo'], 'whiz')
+
+        # A POST-like request can pass a query string as part of the URL
+        response = self.client.post("/test_client_regress/request_data/?foo=whiz")
+        self.assertEqual(response.context['get-foo'], 'whiz')
+        self.assertEqual(response.context['post-foo'], None)
+        self.assertEqual(response.context['request-foo'], 'whiz')
+
+        # POST data provided in the URL augments actual form data
+        response = self.client.post("/test_client_regress/request_data/?foo=whiz", data={'foo':'bang'})
+        self.assertEqual(response.context['get-foo'], 'whiz')
+        self.assertEqual(response.context['post-foo'], 'bang')
+        self.assertEqual(response.context['request-foo'], 'bang')
+
+        response = self.client.post("/test_client_regress/request_data/?foo=whiz", data={'bar':'bang'})
+        self.assertEqual(response.context['get-foo'], 'whiz')
+        self.assertEqual(response.context['get-bar'], None)
+        self.assertEqual(response.context['post-foo'], None)
+        self.assertEqual(response.context['post-bar'], 'bang')
+        self.assertEqual(response.context['request-foo'], 'whiz')
+        self.assertEqual(response.context['request-bar'], 'bang')
+
+class UnicodePayloadTests(TestCase):
+    def test_simple_unicode_payload(self):
+        "A simple ASCII-only unicode JSON document can be POSTed"
+        # Regression test for #10571
+        json = u'{"english": "mountain pass"}'
+        response = self.client.post("/test_client_regress/parse_unicode_json/", json,
+                                    content_type="application/json")
+        self.assertEqual(response.content, json)
+
+    def test_unicode_payload_utf8(self):
+        "A non-ASCII unicode data encoded as UTF-8 can be POSTed"
+        # Regression test for #10571
+        json = u'{"dog": "собака"}'
+        response = self.client.post("/test_client_regress/parse_unicode_json/", json,
+                                    content_type="application/json; charset=utf-8")
+        self.assertEqual(response.content, json.encode('utf-8'))
+
+    def test_unicode_payload_utf16(self):
+        "A non-ASCII unicode data encoded as UTF-16 can be POSTed"
+        # Regression test for #10571
+        json = u'{"dog": "собака"}'
+        response = self.client.post("/test_client_regress/parse_unicode_json/", json,
+                                    content_type="application/json; charset=utf-16")
+        self.assertEqual(response.content, json.encode('utf-16'))
+
+    def test_unicode_payload_non_utf(self):
+        "A non-ASCII unicode data as a non-UTF based encoding can be POSTed"
+        #Regression test for #10571
+        json = u'{"dog": "собака"}'
+        response = self.client.post("/test_client_regress/parse_unicode_json/", json,
+                                    content_type="application/json; charset=koi8-r")
+        self.assertEqual(response.content, json.encode('koi8-r'))

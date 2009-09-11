@@ -131,7 +131,7 @@ The strings you pass to ``_()`` or ``ugettext()`` can take placeholders,
 specified with Python's standard named-string interpolation syntax. Example::
 
     def my_view(request, m, d):
-        output = _('Today is %(month)s, %s(day)s.') % {'month': m, 'day': d}
+        output = _('Today is %(month)s, %(day)s.') % {'month': m, 'day': d}
         return HttpResponse(output)
 
 This technique lets language-specific translations reorder the placeholder
@@ -174,7 +174,26 @@ For example, to translate a model's ``help_text``, do the following::
 
 In this example, ``ugettext_lazy()`` stores a lazy reference to the string --
 not the actual translation. The translation itself will be done when the string
-is used in a string context, such as template rendering on the Django admin site.
+is used in a string context, such as template rendering on the Django admin
+site.
+
+The result of a ``ugettext_lazy()`` call can be used wherever you would use a
+unicode string (an object with type ``unicode``) in Python. If you try to use
+it where a bytestring (a ``str`` object) is expected, things will not work as
+expected, since a ``ugettext_lazy()`` object doesn't know how to convert
+itself to a bytestring.  You can't use a unicode string inside a bytestring,
+either, so this is consistent with normal Python behavior. For example::
+
+    # This is fine: putting a unicode proxy into a unicode string.
+    u"Hello %s" % ugettext_lazy("people")
+
+    # This will not work, since you cannot insert a unicode object
+    # into a bytestring (nor can you insert our unicode proxy there)
+    "Hello %s" % ugettext_lazy("people")
+
+If you ever see output that looks like ``"hello
+<django.utils.functional...>"``, you have tried to insert the result of
+``ugettext_lazy()`` into a bytestring. That's a bug in your code.
 
 If you don't like the verbose name ``ugettext_lazy``, you can just alias it as
 ``_`` (underscore), like so::
@@ -204,7 +223,19 @@ Pluralization
 ~~~~~~~~~~~~~
 
 Use the function ``django.utils.translation.ungettext()`` to specify pluralized
-messages. Example::
+messages.
+
+``ungettext`` takes three arguments: the singular translation string, the plural
+translation string and the number of objects.
+
+This function is useful when your need you Django application to be localizable
+to languages where the number and complexity of `plural forms
+<http://www.gnu.org/software/gettext/manual/gettext.html#Plural-forms>`_ is
+greater than the two forms used in English ('object' for the singular and
+'objects' for all the cases where ``count`` is different from zero, irrespective
+of its value.)
+
+For example::
 
     from django.utils.translation import ungettext
     def hello_world(request, count):
@@ -213,9 +244,61 @@ messages. Example::
         }
         return HttpResponse(page)
 
-``ungettext`` takes three arguments: the singular translation string, the plural
-translation string and the number of objects (which is passed to the
-translation languages as the ``count`` variable).
+In this example the number of objects is passed to the translation languages as
+the ``count`` variable.
+
+Lets see a slightly more complex usage example::
+
+    from django.utils.translation import ungettext
+
+    count = Report.objects.count()
+    if count == 1:
+        name = Report._meta.verbose_name
+    else:
+        name = Report._meta.verbose_name_plural
+
+    text = ungettext(
+            'There is %(count)d %(name)s available.',
+            'There are %(count)d %(name)s available.',
+            count
+    ) % {
+        'count': count,
+        'name': name
+    }
+
+Here we reuse localizable, hopefully already translated literals (contained in
+the ``verbose_name`` and ``verbose_name_plural`` model ``Meta`` options) for
+other parts of the sentence so all of it is consistently based on the
+cardinality of the elements at play.
+
+.. _pluralization-var-notes:
+
+.. note::
+
+    When using this technique, make sure you use a single name for every
+    extrapolated variable included in the literal. In the example above note how
+    we used the ``name`` Python variable in both translation strings. This
+    example would fail::
+
+        from django.utils.translation import ungettext
+        from myapp.models import Report
+
+        count = Report.objects.count()
+        d = {
+            'count': count,
+            'name': Report._meta.verbose_name
+            'plural_name': Report._meta.verbose_name_plural
+        }
+        text = ungettext(
+                'There is %(count)d %(name)s available.',
+                'There are %(count)d %(plural_name)s available.',
+                count
+        ) % d
+
+    You would get a ``a format specification for argument 'name', as in
+    'msgstr[0]', doesn't exist in 'msgid'`` error when running
+    ``django-admin.py compilemessages`` or a ``KeyError`` Python exception at
+    runtime.
 
 In template code
 ----------------
@@ -232,11 +315,13 @@ The ``{% trans %}`` template tag translates either a constant string
     <title>{% trans "This is the title." %}</title>
     <title>{% trans myvar %}</title>
 
-If the ``noop`` option is present, variable lookup still takes place but the
-translation is skipped. This is useful when "stubbing out" content that will
-require translation in the future::
+If the ``noop`` option is present, variable lookup still takes place, but the
+original text will be returned unchanged. This is useful when "stubbing out"
+content that will require translation in the future::
 
     <title>{% trans "myvar" noop %}</title>
+
+Internally, inline translations use an ``ugettext`` call.
 
 It's not possible to mix a template variable inside a string within ``{% trans
 %}``. If your translations require strings with variables (placeholders), use
@@ -269,8 +354,11 @@ To pluralize, specify both the singular and plural forms with the
     There are {{ counter }} {{ name }} objects.
     {% endblocktrans %}
 
-Internally, all block and inline translations use the appropriate
-``ugettext`` / ``ungettext`` call.
+When you use the pluralization feature and bind additional values to local
+variables apart from the counter value that selects the translated literal to be
+used, have in mind that the ``blocktrans`` construct is internally converted
+to an ``ungettext`` call. This means the same :ref:`notes regarding ungettext
+variables <pluralization-var-notes>` apply.
 
 Each ``RequestContext`` has access to three translation-specific variables:
 
@@ -279,7 +367,8 @@ Each ``RequestContext`` has access to three translation-specific variables:
       currently active locale).
 
     * ``LANGUAGE_CODE`` is the current user's preferred language, as a string.
-      Example: ``en-us``. (See "How language preference is discovered", below.)
+      Example: ``en-us``. (See :ref:`how-django-discovers-language-preference`,
+      below.)
 
     * ``LANGUAGE_BIDI`` is the current locale's direction. If True, it's a
       right-to-left language, e.g.: Hebrew, Arabic. If False it's a
@@ -434,10 +523,10 @@ The script should be run from one of three places:
       path). This is only relevant when you are creating a translation for
       Django itself, see :ref:`contributing-translations`.
 
-Th script runs over your project source tree or your application source tree and
-pulls out all strings marked for translation. It creates (or updates) a message
-file in the directory ``locale/LANG/LC_MESSAGES``. In the ``de`` example, the
-file will be ``locale/de/LC_MESSAGES/django.po``.
+The script runs over your project source tree or your application source tree
+and pulls out all strings marked for translation. It creates (or updates) a
+message file in the directory ``locale/LANG/LC_MESSAGES``. In the ``de``
+example, the file will be ``locale/de/LC_MESSAGES/django.po``.
 
 By default ``django-admin.py makemessages`` examines every file that has the
 ``.html`` file extension. In case you want to override that default, use the
@@ -495,7 +584,7 @@ A quick explanation:
       out empty, so it's your responsibility to change it. Make sure you keep
       the quotes around your translation.
     * As a convenience, each message includes, in the form of a comment line
-      prefixed with ``#`` and locted above the ``msgid`` line, the filename and
+      prefixed with ``#`` and located above the ``msgid`` line, the filename and
       line number from which the translation string was gleaned.
 
 Long messages are a special case. There, the first string directly after the
@@ -546,6 +635,8 @@ That's it. Your translations are ready for use.
    If you're using Windows and need to install the GNU gettext utilities so
    ``django-admin compilemessages`` works see `gettext on Windows`_ for more
    information.
+
+.. _how-django-discovers-language-preference:
 
 3. How Django discovers language preference
 ===========================================
@@ -764,7 +855,6 @@ project message file that are already in application message files.
 
 The easiest way out is to store applications that are not part of the project
 (and so carry their own translations) outside the project tree. That way,
-
 ``django-admin.py makemessages`` on the project level will only translate
 strings that are connected to your explicit project and not strings that are
 distributed independently.
@@ -785,8 +875,7 @@ The view expects to be called via the ``POST`` method, with a ``language``
 parameter set in request. If session support is enabled, the view
 saves the language choice in the user's session. Otherwise, it saves the
 language choice in a cookie that is by default named ``django_language``.
-(The name can be changed through the ``LANGUAGE_COOKIE_NAME`` setting if you're
-using the Django development version.)
+(The name can be changed through the ``LANGUAGE_COOKIE_NAME`` setting.)
 
 After setting the language choice, Django redirects the user, following this
 algorithm:
@@ -870,11 +959,11 @@ Using the JavaScript translation catalog
 
 To use the catalog, just pull in the dynamically generated script like this::
 
-    <script type="text/javascript" src="/path/to/jsi18n/"></script>
+    <script type="text/javascript" src="{% url django.views.i18n.javascript_catalog %}"></script>
 
-This is how the admin fetches the translation catalog from the server. When the
-catalog is loaded, your JavaScript code can use the standard ``gettext``
-interface to access it::
+This uses reverse URL lookup to find the URL of the JavaScript catalog view.
+When the catalog is loaded, your JavaScript code can use the standard
+``gettext`` interface to access it::
 
     document.write(gettext('this is to be translated'));
 
@@ -958,15 +1047,17 @@ message files (``.po``). Translation work itself just involves editing existing
 files of this type, but if you want to create your own message files, or want to
 test or compile a changed message file, you will need the ``gettext`` utilities:
 
-    * Download the following zip files from
-      http://sourceforge.net/projects/gettext
+    * Download the following zip files from the GNOME servers
+      http://ftp.gnome.org/pub/gnome/binaries/win32/dependencies/ or from one
+      of its mirrors_
 
-      * ``gettext-runtime-X.bin.woe32.zip``
-      * ``gettext-tools-X.bin.woe32.zip``
-      * ``libiconv-X.bin.woe32.zip``
+      * ``gettext-runtime-X.zip``
+      * ``gettext-tools-X.zip``
 
-    * Extract the 3 files in the same folder (i.e. ``C:\Program
-      Files\gettext-utils``)
+      ``X`` is the version number, we recomend using ``0.15`` or higher.
+
+    * Extract the contents of the ``bin\`` directories in both files to the
+      same folder on your system (i.e. ``C:\Program Files\gettext-utils``)
 
     * Update the system PATH:
 
@@ -974,3 +1065,12 @@ test or compile a changed message file, you will need the ``gettext`` utilities:
       * In the ``System variables`` list, click ``Path``, click ``Edit``
       * Add ``;C:\Program Files\gettext-utils\bin`` at the end of the
         ``Variable value`` field
+
+.. _mirrors: http://ftp.gnome.org/pub/GNOME/MIRRORS
+
+You may also use ``gettext`` binaries you have obtained elsewhere, so long as
+the ``xgettext --version`` command works properly. Some version 0.14.4 binaries
+have been found to not support this command. Do not attempt to use Django
+translation utilities with a ``gettext`` package if the command ``xgettext
+--version`` entered at a Windows command prompt causes a popup window saying
+"xgettext.exe has generated errors and will be closed by Windows".

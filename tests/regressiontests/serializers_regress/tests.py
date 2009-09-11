@@ -103,7 +103,7 @@ def data_compare(testcase, pk, klass, data):
 def generic_compare(testcase, pk, klass, data):
     instance = klass.objects.get(id=pk)
     testcase.assertEqual(data[0], instance.data)
-    testcase.assertEqual(data[1:], [t.data for t in instance.tags.all()])
+    testcase.assertEqual(data[1:], [t.data for t in instance.tags.order_by('id')])
 
 def fk_compare(testcase, pk, klass, data):
     instance = klass.objects.get(id=pk)
@@ -111,7 +111,7 @@ def fk_compare(testcase, pk, klass, data):
 
 def m2m_compare(testcase, pk, klass, data):
     instance = klass.objects.get(id=pk)
-    testcase.assertEqual(data, [obj.id for obj in instance.data.all()])
+    testcase.assertEqual(data, [obj.id for obj in instance.data.order_by('id')])
 
 def im2m_compare(testcase, pk, klass, data):
     instance = klass.objects.get(id=pk)
@@ -360,8 +360,11 @@ def serializerTest(format, self):
             objects.extend(func[0](pk, klass, datum))
             instance_count[klass] = 0
         transaction.commit()
-    finally:
+    except:
+        transaction.rollback()
         transaction.leave_transaction_management()
+        raise
+    transaction.leave_transaction_management()
 
     # Get a count of the number of objects created for each class
     for klass in instance_count:
@@ -381,8 +384,11 @@ def serializerTest(format, self):
         for obj in serializers.deserialize(format, serialized_data):
             obj.save()
         transaction.commit()
-    finally:
+    except:
+        transaction.rollback()
         transaction.leave_transaction_management()
+        raise
+    transaction.leave_transaction_management()
 
     # Assert that the deserialized data is the same
     # as the original source

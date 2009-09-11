@@ -31,26 +31,25 @@ allows access to users with those two fields both set to True.
 How can I prevent the cache middleware from caching the admin site?
 -------------------------------------------------------------------
 
-Set the :setting:``CACHE_MIDDLEWARE_ANONYMOUS_ONLY`` setting to ``True``. See the
+Set the :setting:`CACHE_MIDDLEWARE_ANONYMOUS_ONLY` setting to ``True``. See the
 :ref:`cache documentation <topics-cache>` for more information.
 
 How do I automatically set a field's value to the user who last edited the object in the admin?
 -----------------------------------------------------------------------------------------------
 
-At this point, Django doesn't have an official way to do this. But it's an oft-requested
-feature, so we're discussing how it can be implemented. The problem is we don't want to couple
-the model layer with the admin layer with the request layer (to get the current user). It's a
-tricky problem.
-
-One person hacked up a `solution that doesn't require patching Django`_, but note that it's an
-unofficial solution, and there's no guarantee it won't break at some point.
-
-.. _solution that doesn't require patching Django: http://lukeplant.me.uk/blog.php?id=1107301634
+The :class:`ModelAdmin` class provides customization hooks that allow you to transform
+an object as it saved, using details from the request. By extracting the current user
+from the request, and customizing the :meth:`ModelAdmin.save_model` hook, you can update
+an object to reflect the user that edited it. See :ref:`the documentation on ModelAdmin
+methods <model-admin-methods>` for an example.
 
 How do I limit admin access so that objects can only be edited by the users who created them?
 ---------------------------------------------------------------------------------------------
 
-See the answer to the previous question.
+The :class:`ModelAdmin` class also provides customization hooks that allow you to control the
+visibility and editability of objects in the admin. Using the same trick of extracting the
+user from the request, the :meth:`ModelAdmin.queryset` and :meth:`ModelAdmin.has_change_permission`
+can be used to control the visibility and editability of objects in the admin.
 
 My admin-site CSS and images showed up fine using the development server, but they're not displaying when using mod_python.
 ---------------------------------------------------------------------------------------------------------------------------
@@ -94,10 +93,3 @@ site is built using semantic HTML and plenty of CSS hooks, so any changes you'd
 like to make should be possible by editing the stylesheet. We've got a
 :ref:`guide to the CSS used in the admin <obsolete-admin-css>` to get you started.
 
-How do I create users without having to edit password hashes?
--------------------------------------------------------------
-
-If you'd like to use the admin site to create users, upgrade to the Django
-development version, where this problem was fixed on Aug. 4, 2006.
-
-You can also use the Python API. See :ref:`creating users <topics-auth-creating-users>` for full info.

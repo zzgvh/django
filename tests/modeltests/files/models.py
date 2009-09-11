@@ -5,14 +5,17 @@
 and where files should be stored.
 """
 
+import shutil
+import random
 import tempfile
-
 from django.db import models
 from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.storage import FileSystemStorage
 from django.core.cache import cache
 
-temp_storage = FileSystemStorage(location=tempfile.gettempdir())
+temp_storage_location = tempfile.mkdtemp()
+temp_storage = FileSystemStorage(location=temp_storage_location)
 
 # Write out a file to be used as default content
 temp_storage.save('tests/default.txt', ContentFile('default content'))
@@ -24,7 +27,6 @@ class Storage(models.Model):
     def random_upload_to(self, filename):
         # This returns a different result each time,
         # to make sure it only gets called once.
-        import random
         return '%s/%s' % (random.randint(100, 999), filename)
 
     normal = models.FileField(storage=temp_storage, upload_to='tests')
@@ -33,6 +35,12 @@ class Storage(models.Model):
     default = models.FileField(storage=temp_storage, upload_to='tests', default='tests/default.txt')
 
 __test__ = {'API_TESTS':"""
+# Attempting to access a FileField from the class raises a descriptive error
+>>> Storage.normal
+Traceback (most recent call last):
+...
+AttributeError: The 'normal' attribute can only be accessed from Storage instances.
+
 # An object without a file has limited functionality.
 
 >>> obj1 = Storage()
@@ -52,6 +60,23 @@ ValueError: The 'normal' attribute has no file associated with it.
 7
 >>> obj1.normal.read()
 'content'
+
+# File objects can be assigned to FileField attributes,  but shouldn't get
+# committed until the model it's attached to is saved.
+
+>>> obj1.normal = SimpleUploadedFile('assignment.txt', 'content')
+>>> dirs, files = temp_storage.listdir('tests')
+>>> dirs
+[]
+>>> files.sort()
+>>> files
+['default.txt', 'django_test.txt']
+
+>>> obj1.save()
+>>> dirs, files = temp_storage.listdir('tests')
+>>> files.sort()
+>>> files
+['assignment.txt', 'default.txt', 'django_test.txt']
 
 # Files can be read in a little at a time, if necessary.
 
@@ -109,10 +134,10 @@ ValueError: The 'normal' attribute has no file associated with it.
 >>> obj4.random
 <FieldFile: .../random_file>
 
-# Clean up the temporary files.
-
+# Clean up the temporary files and dir.
 >>> obj1.normal.delete()
 >>> obj2.normal.delete()
 >>> obj3.default.delete()
 >>> obj4.random.delete()
+>>> shutil.rmtree(temp_storage_location)
 """}
