@@ -218,6 +218,11 @@ class ModPythonHandler(BaseHandler):
         try:
             for chunk in response:
                 req.write(chunk)
+        # Fix by GvH 20100823
+        # Uses patch from http://code.djangoproject.com/ticket/10046
+        except:
+            pass
+        # End fix
         finally:
             response.close()
 
